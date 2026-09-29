@@ -1,0 +1,18 @@
+<div class="login-box card">
+  <h2>Iniciar sesion</h2>
+  <p>Acceso exclusivo para personal de almacen de AZA. Estas credenciales son distintas de las de LUX.</p>
+  <% if (error) { %>
+    <div class="error"><%= error %></div>
+  <% } %>
+  <form method="POST" action="/almacen/login" style="display:flex; flex-direction:column; gap:10px;">
+    <label>
+      Usuario
+      <input type="text" name="username" autocomplete="username" required autofocus>
+    </label>
+    <label>
+      Contrasena
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit">Entrar</button>
+  </form>
+</div>

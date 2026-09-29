@@ -1,0 +1,24 @@
+node_modules/
+dist/
+coverage/
+*.log
+npm-debug.log*
+
+# Variables de entorno: nunca versionar credenciales reales
+.env
+.env.*
+!.env.example
+
+# Entorno de Postman: contiene la AZA_API_KEY real rellenada localmente.
+# La coleccion (.postman_collection.json) si se versiona, no tiene secretos.
+postman/*.postman_environment.json
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Base de datos SQLite local de usuarios de la interfaz web de almacen (contiene hashes de
+# contrasenas reales, nunca se versiona).
+data/

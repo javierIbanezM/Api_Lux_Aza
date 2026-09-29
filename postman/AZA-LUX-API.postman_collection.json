@@ -1,0 +1,252 @@
+{
+  "info": {
+    "name": "AZA <-> LUX API (propia)",
+    "description": "Coleccion para probar la API propia de AZA (no la de LUX directamente). Envuelve /proc de LUX detras de endpoints de negocio: /api/expediciones, /api/recepciones, /api/catalogos. Ver docs/openapi.yaml y README.md en el proyecto para el contrato completo.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "X-Api-Key", "type": "string" },
+      { "key": "value", "value": "{{apiKey}}", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Liveness",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/health/live", "host": ["{{baseUrl}}"], "path": ["health", "live"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Readiness",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/health/ready", "host": ["{{baseUrl}}"], "path": ["health", "ready"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Expediciones",
+      "item": [
+        {
+          "name": "Listar expediciones",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/expediciones?propietario=CAMELIA&estado=TODOS",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "expediciones"],
+              "query": [
+                { "key": "propietario", "value": "CAMELIA" },
+                { "key": "estado", "value": "TODOS" },
+                { "key": "pedido", "value": "", "disabled": true },
+                { "key": "fecha", "value": "", "disabled": true },
+                { "key": "fecha_fin", "value": "", "disabled": true }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Crear expedicion (cabecera + lineas)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"propietario\": \"CAMELIA\",\n  \"codCliente\": \"1045371751 / 35\",\n  \"transportista\": \"AZA LOGISTICS\",\n  \"serviceLevel\": \"NORMAL\",\n  \"fecha\": \"16/09/2026\",\n  \"pedido\": \"TestFer1\",\n  \"observacionesAlbaran\": \"Entregar en muelle 3\",\n  \"fechaEntrega\": \"20/09/2026\",\n  \"lineas\": [\n    { \"linea\": \"1\", \"referencia\": \"3760297544959\", \"cantidadPedida\": \"24\", \"lote\": \"L2026\" }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/expediciones", "host": ["{{baseUrl}}"], "path": ["api", "expediciones"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Detalle de expedicion",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/expediciones/{{idPedido}}", "host": ["{{baseUrl}}"], "path": ["api", "expediciones", "{{idPedido}}"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Actualizar cabecera de expedicion",
+          "request": {
+            "method": "PUT",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"propietario\": \"CAMELIA\",\n  \"codCliente\": \"1045371751 / 35\",\n  \"transportista\": \"DHL\",\n  \"serviceLevel\": \"NORMAL\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/expediciones/{{idPedido}}", "host": ["{{baseUrl}}"], "path": ["api", "expediciones", "{{idPedido}}"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Listar lineas de expedicion",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/expediciones/{{idPedido}}/lineas", "host": ["{{baseUrl}}"], "path": ["api", "expediciones", "{{idPedido}}", "lineas"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Crear linea de expedicion",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"linea\": \"2\",\n  \"referencia\": \"3760297544959\",\n  \"cantidadPedida\": \"24\",\n  \"lote\": \"L2026\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/expediciones/{{idPedido}}/lineas", "host": ["{{baseUrl}}"], "path": ["api", "expediciones", "{{idPedido}}", "lineas"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Actualizar linea de expedicion",
+          "request": {
+            "method": "PUT",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cantidadPedida\": \"30\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/expediciones/{{idPedido}}/lineas/{{idLinea}}", "host": ["{{baseUrl}}"], "path": ["api", "expediciones", "{{idPedido}}", "lineas", "{{idLinea}}"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Recepciones",
+      "item": [
+        {
+          "name": "Listar recepciones",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/recepciones?propietario=CAMELIA&estado=TODOS",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "recepciones"],
+              "query": [
+                { "key": "propietario", "value": "CAMELIA" },
+                { "key": "estado", "value": "TODOS" },
+                { "key": "albaran", "value": "", "disabled": true }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Crear recepcion (cabecera + lineas)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"propietario\": \"CAMELIA\",\n  \"codProveedor\": \"PROV1\",\n  \"fecha\": \"12/08/2026\",\n  \"agencia\": \"SEUR\",\n  \"ue\": \"SI\",\n  \"matricula\": \"1234ABC\",\n  \"dni\": \"12345678Z\",\n  \"nombre\": \"Juan\",\n  \"lineas\": [\n    { \"linea\": \"1\", \"referencia\": \"3760297544959\", \"piezasAlbaran\": \"50\", \"lote\": \"L1\", \"fechaCaducidad\": \"31/12/2026\" }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/recepciones", "host": ["{{baseUrl}}"], "path": ["api", "recepciones"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Detalle de recepcion",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/recepciones/{{idAlbaran}}", "host": ["{{baseUrl}}"], "path": ["api", "recepciones", "{{idAlbaran}}"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Actualizar cabecera de recepcion",
+          "request": {
+            "method": "PUT",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"propietario\": \"CAMELIA\",\n  \"codProveedor\": \"PROV1\",\n  \"observaciones\": \"Cambio de observaciones\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/recepciones/{{idAlbaran}}", "host": ["{{baseUrl}}"], "path": ["api", "recepciones", "{{idAlbaran}}"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Listar lineas de recepcion",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/recepciones/{{idAlbaran}}/lineas", "host": ["{{baseUrl}}"], "path": ["api", "recepciones", "{{idAlbaran}}", "lineas"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Crear linea de recepcion",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"linea\": \"1\",\n  \"referencia\": \"3760297544959\",\n  \"piezasAlbaran\": \"50\",\n  \"lote\": \"L1\",\n  \"fechaCaducidad\": \"31/12/2026\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/recepciones/{{idAlbaran}}/lineas", "host": ["{{baseUrl}}"], "path": ["api", "recepciones", "{{idAlbaran}}", "lineas"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Actualizar linea de recepcion",
+          "request": {
+            "method": "PUT",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"piezasAlbaran\": \"60\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/recepciones/{{idAlbaran}}/lineas/{{idLinea}}", "host": ["{{baseUrl}}"], "path": ["api", "recepciones", "{{idAlbaran}}", "lineas", "{{idLinea}}"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Catalogos",
+      "item": [
+        {
+          "name": "Consultar catalogo (transportistas)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/catalogos/transportistas", "host": ["{{baseUrl}}"], "path": ["api", "catalogos", "transportistas"] }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

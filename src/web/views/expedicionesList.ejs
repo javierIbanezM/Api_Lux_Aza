@@ -1,0 +1,54 @@
+<h2>Expediciones</h2>
+
+<% if (error) { %>
+  <div class="error"><%= error %></div>
+<% } %>
+
+<form class="filters" method="GET" action="/almacen/expediciones">
+  <label>
+    Propietario
+    <input type="text" name="propietario" value="<%= filters.propietario || '' %>">
+  </label>
+  <label>
+    Estado
+    <input type="text" name="estado" value="<%= filters.estado || '' %>">
+  </label>
+  <label>
+    Pedido (texto)
+    <input type="text" name="pedido" value="<%= filters.pedido || '' %>">
+  </label>
+  <button type="submit">Filtrar</button>
+  <a class="btn-link" href="/almacen/expediciones">Limpiar</a>
+</form>
+
+<table>
+  <thead>
+    <tr>
+      <th><a class="sort-link" href="<%= sortLinks.id.href %>">Id <%= sortLinks.id.indicator %></a></th>
+      <th><a class="sort-link" href="<%= sortLinks.pedido.href %>">Pedido <%= sortLinks.pedido.indicator %></a></th>
+      <th><a class="sort-link" href="<%= sortLinks.propietario.href %>">Propietario <%= sortLinks.propietario.indicator %></a></th>
+      <th><a class="sort-link" href="<%= sortLinks.clienteNombre.href %>">Cliente <%= sortLinks.clienteNombre.indicator %></a></th>
+      <th><a class="sort-link" href="<%= sortLinks.estado.href %>">Estado <%= sortLinks.estado.indicator %></a></th>
+      <th><a class="sort-link" href="<%= sortLinks.tipo.href %>">Tipo <%= sortLinks.tipo.indicator %></a></th>
+      <th><a class="sort-link" href="<%= sortLinks.fecha.href %>">Fecha <%= sortLinks.fecha.indicator %></a></th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <% if (expediciones.length === 0) { %>
+      <tr><td colspan="8">Sin resultados.</td></tr>
+    <% } %>
+    <% expediciones.forEach(function(exp) { %>
+      <tr>
+        <td><%= exp.id %></td>
+        <td><%= exp.pedido %></td>
+        <td><%= exp.propietario %></td>
+        <td><%= exp.clienteNombre || exp.cliente %></td>
+        <td><%= exp.estado %></td>
+        <td><%= exp.tipo %></td>
+        <td><%= exp.fecha %></td>
+        <td><a class="btn-link" href="/almacen/expediciones/<%= exp.id %>">Ver detalle</a></td>
+      </tr>
+    <% }); %>
+  </tbody>
+</table>

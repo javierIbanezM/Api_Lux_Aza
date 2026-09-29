@@ -1,0 +1,48 @@
+<h2>Recepciones</h2>
+
+<% if (error) { %>
+  <div class="error"><%= error %></div>
+<% } %>
+
+<form class="filters" method="GET" action="/almacen/recepciones">
+  <label>
+    Propietario
+    <input type="text" name="propietario" value="<%= filters.propietario || '' %>">
+  </label>
+  <label>
+    Estado
+    <input type="text" name="estado" value="<%= filters.estado || '' %>">
+  </label>
+  <label>
+    Albaran (texto)
+    <input type="text" name="albaran" value="<%= filters.albaran || '' %>">
+  </label>
+  <button type="submit">Filtrar</button>
+  <a class="btn-link" href="/almacen/recepciones">Limpiar</a>
+</form>
+
+<table>
+  <thead>
+    <tr>
+      <th><a class="sort-link" href="<%= sortLinks.id.href %>">Id <%= sortLinks.id.indicator %></a></th>
+      <th><a class="sort-link" href="<%= sortLinks.albaran.href %>">Albaran <%= sortLinks.albaran.indicator %></a></th>
+      <th><a class="sort-link" href="<%= sortLinks.propietario.href %>">Propietario <%= sortLinks.propietario.indicator %></a></th>
+      <th><a class="sort-link" href="<%= sortLinks.estado.href %>">Estado <%= sortLinks.estado.indicator %></a></th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <% if (recepciones.length === 0) { %>
+      <tr><td colspan="5">Sin resultados.</td></tr>
+    <% } %>
+    <% recepciones.forEach(function(rec) { %>
+      <tr>
+        <td><%= rec.id %></td>
+        <td><%= rec.albaran %></td>
+        <td><%= rec.propietario %></td>
+        <td><%= rec.estado %></td>
+        <td><a class="btn-link" href="/almacen/recepciones/<%= rec.id %>">Ver detalle</a></td>
+      </tr>
+    <% }); %>
+  </tbody>
+</table>

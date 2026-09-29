@@ -1,0 +1,44 @@
+{
+  "name": "api-whales-aza",
+  "version": "1.0.0",
+  "description": "Integracion de AZA Logistics con la API LUX (Whales)",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "main": "dist/src/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/server.js",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "create-web-user": "tsx scripts/createWebUser.ts"
+  },
+  "dependencies": {
+    "axios": "^1.20.0",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^11.10.0",
+    "ejs": "^6.0.1",
+    "express": "^4.21.2",
+    "express-session": "^1.19.0",
+    "swagger-ui-express": "^5.0.1",
+    "yaml": "^2.9.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^4.17.21",
+    "@types/express-session": "^1.19.0",
+    "@types/node": "^20.17.9",
+    "@types/swagger-ui-express": "^4.1.8",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

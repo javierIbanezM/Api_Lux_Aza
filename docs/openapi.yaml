@@ -1,0 +1,328 @@
+openapi: 3.0.3
+info:
+  title: API AZA <-> LUX (Whales)
+  description: >
+    API REST propia de AZA Logistics que envuelve la integracion con el SGA LUX (Whales).
+    No expone /proc como proxy directo: cada endpoint representa una operacion de negocio
+    (crear/actualizar/consultar expediciones y recepciones, catalogos). Todos los endpoints de
+    /api/* aceptan la cabecera opcional "Almacen" (ver components.parameters.AlmacenHeader) para
+    operar sobre un almacen distinto al configurado por defecto (LUX_WAREHOUSE).
+  version: 1.0.0
+servers:
+  - url: /
+security:
+  - ApiKeyAuth: []
+paths:
+  /health/live:
+    get:
+      summary: Liveness check (no llama a LUX). Publico, sin autenticacion.
+      security: []
+      responses:
+        '200':
+          description: El proceso esta vivo
+  /health/ready:
+    get:
+      summary: >
+        Readiness check (configuracion valida + estado de auth cacheado). Publico, sin
+        autenticacion. La respuesta se limita a { status, ready }, sin detalles de configuracion
+        interna (p.ej. el codigo de almacen).
+      security: []
+      responses:
+        '200':
+          description: Listo para recibir trafico
+        '503':
+          description: Configuracion invalida
+  /api/expediciones:
+    get:
+      summary: Listar expediciones (p_expedicionesAza, accion SELECT)
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+        - in: query
+          name: propietario
+          schema: { type: string }
+        - in: query
+          name: pedido
+          schema: { type: string }
+        - in: query
+          name: estado
+          schema: { type: string }
+      responses:
+        '200':
+          description: Listado de expediciones
+    post:
+      summary: Crear expedicion (cabecera + lineas opcionales)
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrearExpedicion'
+      responses:
+        '201':
+          description: Expedicion creada (cabecera y lineas ok/fallidas)
+        '400':
+          description: >
+            Datos de entrada invalidos (incluye mas de 200 lineas en el mismo lote, o un valor de
+            cabecera Almacen desconocido)
+        '401':
+          description: Falta o es invalida la cabecera X-Api-Key
+        '422':
+          description: Error funcional de LUX (p.ej. transportista no existe)
+  /api/expediciones/{idPedido}:
+    get:
+      summary: Detalle de expedicion (cabecera + datos extra + lineas + contenedores)
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+        - in: path
+          name: idPedido
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: >
+            Detalle completo: { cabecera, datosExtra, lineas, contenedores }. `contenedores`
+            viene de p_expPedidoContenedores, no documentado en la guia del proveedor (ver
+            docs/lux-api-analysis.md #14).
+    put:
+      summary: Actualizar cabecera de expedicion
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+        - in: path
+          name: idPedido
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Cabecera actualizada
+  /api/expediciones/{idPedido}/contenedores:
+    get:
+      summary: >
+        Contenedores/bultos de una expedicion (p_expPedidoContenedores, accion SELECT_INICIO).
+        Procedimiento NO documentado en la guia del proveedor: confirmado por prueba directa
+        contra el servidor real, ver docs/lux-api-analysis.md #14. Solo lectura.
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+        - in: path
+          name: idPedido
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Lista de contenedores/bultos de la expedicion
+  /api/expediciones/{idPedido}/lineas:
+    get:
+      summary: Listar lineas de una expedicion
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+        - in: path
+          name: idPedido
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Lineas de la expedicion
+    post:
+      summary: Crear linea de expedicion
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+        - in: path
+          name: idPedido
+          required: true
+          schema: { type: string }
+      responses:
+        '201':
+          description: Linea creada
+  /api/expediciones/{idPedido}/lineas/{idLinea}:
+    put:
+      summary: Actualizar linea de expedicion
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+        - in: path
+          name: idPedido
+          required: true
+          schema: { type: string }
+        - in: path
+          name: idLinea
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Linea actualizada
+  /api/recepciones:
+    get:
+      summary: Listar recepciones (p_recepcionesAza, accion SELECT)
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+      responses:
+        '200':
+          description: Listado de recepciones
+    post:
+      summary: Crear recepcion (cabecera + lineas opcionales)
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrearRecepcion'
+      responses:
+        '201':
+          description: Recepcion creada
+        '400':
+          description: >
+            Datos de entrada invalidos (incluye mas de 200 lineas en el mismo lote, o un valor de
+            cabecera Almacen desconocido)
+        '401':
+          description: Falta o es invalida la cabecera X-Api-Key
+        '422':
+          description: Error funcional de LUX
+  /api/recepciones/{idAlbaran}:
+    get:
+      summary: Detalle de recepcion (cabecera + datos extra + lineas)
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+        - in: path
+          name: idAlbaran
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Detalle completo
+    put:
+      summary: Actualizar cabecera de recepcion
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+        - in: path
+          name: idAlbaran
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Cabecera actualizada
+  /api/recepciones/{idAlbaran}/lineas:
+    get:
+      summary: Listar lineas de una recepcion
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+        - in: path
+          name: idAlbaran
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Lineas de la recepcion
+    post:
+      summary: Crear linea de recepcion
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+        - in: path
+          name: idAlbaran
+          required: true
+          schema: { type: string }
+      responses:
+        '201':
+          description: Linea creada
+  /api/recepciones/{idAlbaran}/lineas/{idLinea}:
+    put:
+      summary: Actualizar linea de recepcion
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+        - in: path
+          name: idAlbaran
+          required: true
+          schema: { type: string }
+        - in: path
+          name: idLinea
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Linea actualizada
+  /api/catalogos/{tipo}:
+    get:
+      summary: Consultar catalogo (cacheado con TTL corto configurable, por almacen)
+      parameters:
+        - $ref: '#/components/parameters/AlmacenHeader'
+        - in: path
+          name: tipo
+          required: true
+          schema:
+            type: string
+            enum:
+              - cargas
+              - service-level
+              - descargas
+              - transportistas
+              - propietarios
+              - tipos
+              - pedido-estado
+              - pedido-tipos
+      responses:
+        '200':
+          description: Valores del catalogo
+        '400':
+          description: Catalogo no soportado (o valor de cabecera Almacen desconocido)
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: >
+        Clave compartida (AZA_API_KEY) exigida en toda la API propia de AZA (/api/*). No aplica
+        a /health/*, que es publico.
+  parameters:
+    AlmacenHeader:
+      in: header
+      name: Almacen
+      required: false
+      schema:
+        type: string
+        enum: [SAGUNTO, CHESTECM, ALMUSSAFES, MONTAVERNER, CHESTE]
+      description: >
+        Almacen sobre el que operar (cabecera "Almacen" que se reenvia a LUX). Si se omite, se usa
+        el almacen por defecto de la configuracion (LUX_WAREHOUSE). Un valor no reconocido
+        devuelve 400 sin llegar a llamar a LUX. Lista mantenida en src/lux/warehouses.ts (no
+        documentada por el proveedor).
+  schemas:
+    CrearExpedicion:
+      type: object
+      required: [propietario, codCliente, transportista, serviceLevel]
+      properties:
+        propietario: { type: string }
+        codCliente: { type: string }
+        transportista: { type: string }
+        serviceLevel: { type: string }
+        fecha: { type: string, example: "15/08/2026" }
+        lineas:
+          type: array
+          # Limite operativo de AZA (no forma parte del contrato de LUX): evita payloads
+          # desproporcionados en un unico lote.
+          maxItems: 200
+          items:
+            type: object
+            required: [referencia, cantidadPedida]
+            properties:
+              referencia: { type: string }
+              cantidadPedida: { type: string }
+    CrearRecepcion:
+      type: object
+      required: [propietario]
+      properties:
+        propietario: { type: string }
+        codProveedor: { type: string }
+        fecha: { type: string, example: "12/08/2026" }
+        lineas:
+          type: array
+          # Limite operativo de AZA (no forma parte del contrato de LUX): evita payloads
+          # desproporcionados en un unico lote.
+          maxItems: 200
+          items:
+            type: object
+            required: [referencia, piezasAlbaran]
+            properties:
+              referencia: { type: string }
+              piezasAlbaran: { type: string }
