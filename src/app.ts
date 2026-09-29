@@ -70,7 +70,7 @@ export function createApp(config: AppConfig, logger: Logger, deps: AppDependenci
   // fuera (debe seguir siendo publico para el orquestador/monitor).
   app.use('/api', requireApiKey(config));
   app.use('/api/expediciones', createExpedicionesRouter(deps.expedicionesService));
-  app.use('/api/recepciones', createRecepcionesRouter(deps.recepcionesService));
+  app.use('/api/recepciones', createRecepcionesRouter(deps.recepcionesService, deps.catalogosService));
   app.use('/api/catalogos', createCatalogosRouter(deps.catalogosService));
 
   // Interfaz web para el personal de almacen (/almacen/*): sistema de autenticacion propio y
@@ -83,6 +83,7 @@ export function createApp(config: AppConfig, logger: Logger, deps: AppDependenci
     createWebRouter({
       expedicionesService: deps.expedicionesService,
       recepcionesService: deps.recepcionesService,
+      catalogosService: deps.catalogosService,
       logger,
       defaultAlmacen: config.luxWarehouse,
       db: webDb,

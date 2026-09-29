@@ -67,9 +67,16 @@ export class CatalogosService {
     );
   }
 
-  selectDescargas(almacen?: string): Promise<Record<string, string>[]> {
-    return this.getCached('SELECT_DESCARGAS', almacen, () =>
-      this.luxClient.callProc('p_recCabeceraAza', 'SELECT_DESCARGAS', {}, {
+  /**
+   * Zonas de descarga validas para un propietario (p_recCabeceraAza, accion=SELECT_DESCARGAS).
+   * El PDF del proveedor no aclara si `propietario` es obligatorio; se acepta como parametro
+   * opcional porque un ejemplo de uso real aportado por el usuario lo incluye
+   * (`{"accion":"SELECT_DESCARGAS","propietario":"..."}`), ver docs/lux-api-analysis.md §15.
+   * La cache es por almacen + propietario (los resultados pueden variar segun el propietario).
+   */
+  selectDescargas(propietario?: string, almacen?: string): Promise<Record<string, string>[]> {
+    return this.getCached(`SELECT_DESCARGAS:${propietario ?? 'sin-propietario'}`, almacen, () =>
+      this.luxClient.callProc('p_recCabeceraAza', 'SELECT_DESCARGAS', propietario ? { propietario } : {}, {
         operacion: 'catalogos.selectDescargas',
         almacen,
       }),

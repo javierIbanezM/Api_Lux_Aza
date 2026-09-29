@@ -567,3 +567,32 @@ servidor real de LUX (`SAGUNTO`, `http://192.168.2.145:8081`). Es el detalle de
   `/almacen/expediciones/:id`.
 * TODO — no confirmado: si existe un procedimiento equivalente para **recepciones** (contenedores
   de un albarán de entrada). No se ha preguntado ni probado; no se inventa.
+
+## 15. `p_recCabeceraAza`, `accion=SELECT_DESCARGAS` con filtro `propietario` (2026-09-29)
+
+El PDF documenta la acción `SELECT_DESCARGAS` de `p_recCabeceraAza` (§7, tabla de acciones) pero
+no especifica sus parámetros. El usuario aportó un ejemplo real de uso —
+`{"accion":"SELECT_DESCARGAS","propietario":"00180107"}` — confirmando que acepta (y, a la vista
+de los resultados, requiere para obtener datos) un filtro `propietario`.
+
+Confirmado contra el servidor real (`SAGUNTO`): sin `propietario`, o con un propietario sin zonas
+configuradas, devuelve `[]`; con `propietario=CAMELIA` devuelve las zonas de descarga válidas para
+ese propietario, con forma `{ "campo": "<descripción>" }`, p. ej.:
+
+```json
+[
+  { "campo": "Descarga Granel Contenedor de 40'" },
+  { "campo": "Descarga Granel Contenedor de 20'" },
+  { "campo": "FURGON" },
+  { "campo": "Descarga Contenedor 20' mixto (latas)" }
+]
+```
+
+* `CatalogosService.selectDescargas(propietario?, almacen?)` ahora acepta `propietario` (antes se
+  llamaba sin parámetros); la caché es por almacén + propietario.
+* `GET /api/catalogos/descargas?propietario=<código>` — nuevo parámetro de query.
+* `GET /api/recepciones/:idAlbaran` (detalle) incluye ahora `descargas`: las zonas de descarga
+  válidas para el `propietario` de esa recepción concreta (se llama automáticamente tras obtener
+  la cabecera). Visible también en `/almacen/recepciones/:id`.
+* TODO — no confirmado: si `propietario` es estrictamente obligatorio o solo recomendado (sin él
+  no se ha observado ningún error, solo una lista vacía).

@@ -75,31 +75,49 @@
 
 <div class="card">
   <h3>Contenedores</h3>
+  <div style="overflow-x:auto;">
   <table>
     <thead>
       <tr>
+        <th>Id</th>
         <th>Contenedor</th>
         <th>HU</th>
+        <th>Pallet</th>
         <th>Referencia</th>
         <th>Cantidad</th>
         <th>Lote</th>
+        <th>Fecha caducidad</th>
         <th>Ubicacion</th>
+        <th>Observaciones</th>
+        <th>Largo</th>
+        <th>Ancho</th>
+        <th>Alto</th>
+        <th>Peso</th>
       </tr>
     </thead>
     <tbody>
       <% if (contenedores.length === 0) { %>
-        <tr><td colspan="6">Sin contenedores.</td></tr>
+        <tr><td colspan="14">Sin contenedores.</td></tr>
       <% } %>
       <% contenedores.forEach(function(c) { %>
         <tr>
+          <td><%= c.id %></td>
           <td><%= c.contenedor %></td>
           <td><%= c.hu %></td>
+          <td><%= c.pallet %></td>
           <td><%= c.referencia %></td>
           <td><%= c.cantidad %></td>
           <td><%= c.lote %></td>
+          <td><%= c.fechaCaducidad %></td>
           <td><%= c.ubicacion %></td>
+          <td><%= c.observaciones %></td>
+          <td><%= c.largoContenedor %></td>
+          <td><%= c.anchoContenedor %></td>
+          <td><%= c.altoContenedor %></td>
+          <td><%= c.pesoContenedor %></td>
         </tr>
       <% }); %>
     </tbody>
   </table>
+  </div>
 </div>

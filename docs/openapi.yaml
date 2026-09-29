@@ -184,7 +184,7 @@ paths:
           description: Error funcional de LUX
   /api/recepciones/{idAlbaran}:
     get:
-      summary: Detalle de recepcion (cabecera + datos extra + lineas)
+      summary: Detalle de recepcion (cabecera + datos extra + lineas + descargas)
       parameters:
         - $ref: '#/components/parameters/AlmacenHeader'
         - in: path
@@ -193,7 +193,11 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Detalle completo
+          description: >
+            Detalle completo: { cabecera, datosExtra, lineas, descargas }. `descargas` son las
+            zonas de descarga validas para el propietario de esta recepcion
+            (p_recCabeceraAza/SELECT_DESCARGAS), no documentado con detalle en la guia del
+            proveedor (ver docs/lux-api-analysis.md #15).
     put:
       summary: Actualizar cabecera de recepcion
       parameters:
@@ -263,6 +267,14 @@ paths:
               - tipos
               - pedido-estado
               - pedido-tipos
+        - in: query
+          name: propietario
+          required: false
+          schema: { type: string }
+          description: >
+            Solo relevante para tipo=descargas (p_recCabeceraAza/SELECT_DESCARGAS): filtra las
+            zonas de descarga validas para ese propietario. Sin el, algunos propietarios pueden
+            devolver una lista vacia. Ver docs/lux-api-analysis.md #15.
       responses:
         '200':
           description: Valores del catalogo

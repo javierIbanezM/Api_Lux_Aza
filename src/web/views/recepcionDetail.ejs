@@ -31,6 +31,30 @@
   </div>
 <% } %>
 
+<% if (descargas && descargas.length > 0) { %>
+  <div class="card">
+    <h3>Zonas de descarga disponibles (propietario <%= cabecera.propietario %>)</h3>
+    <table>
+      <thead>
+        <tr>
+          <% Object.keys(descargas[0]).forEach(function(key) { %>
+            <th><%= key %></th>
+          <% }); %>
+        </tr>
+      </thead>
+      <tbody>
+        <% descargas.forEach(function(d) { %>
+          <tr>
+            <% Object.keys(d).forEach(function(key) { %>
+              <td><%= d[key] %></td>
+            <% }); %>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+<% } %>
+
 <div class="card">
   <h3>Lineas</h3>
   <table>

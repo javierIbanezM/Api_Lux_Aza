@@ -4,16 +4,22 @@ import { asyncHandler } from './asyncHandler';
 import { resolveAlmacen } from './resolveAlmacen';
 import { LuxValidationError } from '../lux/errors';
 
-const CATALOG_HANDLERS: Record<string, (service: CatalogosService, almacen?: string) => Promise<Record<string, string>[]>> = {
-  cargas: (s, a) => s.selectCargas(a),
-  'service-level': (s, a) => s.selectServiceLevel(a),
-  descargas: (s, a) => s.selectDescargas(a),
-  transportistas: (s, a) => s.selectTransportistas(a),
-  propietarios: (s, a) => s.selectPropietarios(a),
-  tipos: (s, a) => s.selectTipos(a),
-  'pedido-estado': (s, a) => s.pedidoEstado(a),
-  'pedido-tipos': (s, a) => s.pedidoTipos(a),
+const CATALOG_HANDLERS: Record<string, (service: CatalogosService, req: Request, almacen?: string) => Promise<Record<string, string>[]>> = {
+  cargas: (s, _req, a) => s.selectCargas(a),
+  'service-level': (s, _req, a) => s.selectServiceLevel(a),
+  // Requiere/acepta un filtro `propietario` (query string): ver docs/lux-api-analysis.md §15.
+  descargas: (s, req, a) => s.selectDescargas(stringQueryParam(req, 'propietario'), a),
+  transportistas: (s, _req, a) => s.selectTransportistas(a),
+  propietarios: (s, _req, a) => s.selectPropietarios(a),
+  tipos: (s, _req, a) => s.selectTipos(a),
+  'pedido-estado': (s, _req, a) => s.pedidoEstado(a),
+  'pedido-tipos': (s, _req, a) => s.pedidoTipos(a),
 };
+
+function stringQueryParam(req: Request, name: string): string | undefined {
+  const value = req.query[name];
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+}
 
 /**
  * Acepta la cabecera opcional "Almacen" (mismos valores que src/lux/warehouses.ts) igual que el
@@ -30,7 +36,7 @@ export function createCatalogosController(service: CatalogosService) {
           `Catalogo no soportado: ${tipo}. Validos: ${Object.keys(CATALOG_HANDLERS).join(', ')}`,
         );
       }
-      const resultado = await handler(service, resolveAlmacen(req));
+      const resultado = await handler(service, req, resolveAlmacen(req));
       res.status(200).json(resultado);
     }),
   };

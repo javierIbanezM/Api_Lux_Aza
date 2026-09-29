@@ -158,10 +158,14 @@ describe('Integracion: flujo completo de alta de recepcion', () => {
     mock.updateOptions({
       onProc: (proc, body) => {
         if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_ONE') {
-          return { status: 200, body: [{ mensaje: 'OK', idAlbaran: '3012', albaran: 'ALB-77' }] };
+          return { status: 200, body: [{ mensaje: 'OK', idAlbaran: '3012', albaran: 'ALB-77', propietario: 'CAMELIA' }] };
         }
         if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_INICIO') {
           return { status: 200, body: [{ matricula: '1234ABC' }] };
+        }
+        if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_DESCARGAS') {
+          expect(body.propietario).toBe('CAMELIA');
+          return { status: 200, body: [{ descarga: 'MUELLE1' }] };
         }
         if (proc === 'p_recAlbaranLineas' && body.accion === 'SELECT') {
           return { status: 200, body: [{ id: '88010', referencia: 'REF-100' }] };
@@ -175,6 +179,7 @@ describe('Integracion: flujo completo de alta de recepcion', () => {
     expect(detalle.body.cabecera.idAlbaran).toBe('3012');
     expect(detalle.body.datosExtra.matricula).toBe('1234ABC');
     expect(detalle.body.lineas).toHaveLength(1);
+    expect(detalle.body.descargas).toEqual([{ descarga: 'MUELLE1' }]);
   });
 
   it('propaga un error de red de LUX como 503', async () => {

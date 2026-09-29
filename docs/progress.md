@@ -20,6 +20,38 @@
 | 15 — Ordenación de columnas en listados (`/almacen`) | COMPLETADO | `src/web/sorting.ts`. Clic en cabecera (Id, Pedido, Propietario, Cliente, Estado, Tipo, Fecha / Id, Albaran, Propietario, Estado) alterna asc/desc, preservando filtros. Verificado con datos reales. |
 | 16 — Soporte multi-almacén | COMPLETADO | `src/lux/warehouses.ts`, cabecera `Almacen` opcional en `/api/*`, selector en `/almacen`. Ver sección siguiente. |
 | 17 — Datos completos del visor en el detalle de expedición | COMPLETADO | `resumenListado` (65 campos reales de `p_expedicionesAza`) en `/api/expediciones/:id` y en `/almacen/expediciones/:id`. Ver sección siguiente. |
+| 18 — Columnas faltantes en tabla de contenedores (`pallet` y otras) | COMPLETADO | `pallet`, `fechaCaducidad`, `observaciones`, dimensiones y peso añadidos a `/almacen/expediciones/:id` → Contenedores (ya los devolvía la API, faltaban en la tabla web). |
+| 19 — Zonas de descarga (`SELECT_DESCARGAS`) por propietario en detalle de recepción | COMPLETADO | `CatalogosService.selectDescargas` ahora acepta `propietario`; nuevo campo `descargas` en `/api/recepciones/:id` y `/almacen/recepciones/:id`. Ver sección siguiente. |
+
+## Fase 19 — Zonas de descarga por propietario (2026-09-29)
+
+El usuario aportó un ejemplo real de uso de `p_recCabeceraAza`/`SELECT_DESCARGAS` con un filtro
+`propietario` (`{"accion":"SELECT_DESCARGAS","propietario":"00180107"}`) que la documentación no
+detallaba. Confirmado contra LUX real: con `propietario=CAMELIA` devuelve 4 zonas de descarga
+reales (`{"campo": "..."}`); sin propietario, o con uno sin zonas configuradas, devuelve `[]`.
+
+* `CatalogosService.selectDescargas(propietario?, almacen?)` — antes se llamaba sin parámetros;
+  ahora acepta `propietario` y cachea por almacén+propietario por separado.
+* `GET /api/catalogos/descargas?propietario=<código>` — nuevo parámetro de query.
+* `GET /api/recepciones/:idAlbaran` (detalle) y `/almacen/recepciones/:id` incluyen ahora
+  `descargas`: las zonas válidas para el `propietario` de esa recepción concreta.
+* Se tuvo que inyectar `CatalogosService` en `RecepcionesController`/`recepcionesRoutes`/`webRouter`
+  (antes solo `ExpedicionesService`/`RecepcionesService` llegaban a esas capas).
+* Tests nuevos: `tests/catalogos/CatalogosService.test.ts` (no existía ningún test de
+  `CatalogosService` hasta ahora — cubre `selectDescargas` con/sin propietario y caché separada
+  por propietario), y ampliación del test de integración de detalle de recepciones. 113/113 en
+  verde.
+* TODO — no confirmado: si `propietario` es estrictamente obligatorio para `SELECT_DESCARGAS` o
+  solo recomendado.
+
+## Fase 18 — Columnas de contenedores (2026-09-29)
+
+El usuario detectó que la tabla de "Contenedores" en `/almacen/expediciones/:id` no mostraba el
+campo `pallet` (entre otros) aunque la API ya lo devolvía — el hueco era solo de presentación.
+Añadidas las columnas que faltaban: `id`, `pallet`, `fechaCaducidad`, `observaciones`,
+`largoContenedor`, `anchoContenedor`, `altoContenedor`, `pesoContenedor` (antes solo se mostraban
+6 de los 14 campos de `ExpedicionContenedor`). La tabla ahora se envuelve en un contenedor con
+scroll horizontal por el número de columnas.
 
 ## Fase 17 — Datos completos del visor en el detalle (2026-09-29)
 

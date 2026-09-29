@@ -1,6 +1,7 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import type { ExpedicionesService } from '../services/expediciones';
 import type { RecepcionesService } from '../services/recepciones';
+import type { CatalogosService } from '../services/catalogos';
 import type { Logger } from '../logging';
 import { verifyCredentials } from './users';
 import { getWebDb, type WebDb } from './db';
@@ -11,6 +12,7 @@ import { isValidWarehouse, WAREHOUSES } from '../lux/warehouses';
 export interface WebRouterDependencies {
   expedicionesService: ExpedicionesService;
   recepcionesService: RecepcionesService;
+  catalogosService: CatalogosService;
   logger: Logger;
   /** Almacen por defecto al iniciar sesion (config.luxWarehouse), hasta que el usuario elija otro. */
   defaultAlmacen: string;
@@ -64,7 +66,7 @@ function describeError(err: unknown): string {
  */
 export function createWebRouter(deps: WebRouterDependencies): Router {
   const router = Router();
-  const { expedicionesService, recepcionesService, logger, defaultAlmacen } = deps;
+  const { expedicionesService, recepcionesService, catalogosService, logger, defaultAlmacen } = deps;
   const db = deps.db ?? getWebDb();
 
   router.get('/login', (req: Request, res: Response, next: NextFunction) => {
@@ -269,13 +271,18 @@ export function createWebRouter(deps: WebRouterDependencies): Router {
       recepcionesService.obtenerDatosExtraRecepcion(idAlbaran, almacen),
       recepcionesService.obtenerLineasRecepcion(idAlbaran, almacen),
     ])
-      .then(([cabecera, datosExtra, lineas]) => {
+      .then(async ([cabecera, datosExtra, lineas]) => {
+        // Zonas de descarga validas para el propietario de esta recepcion (p_recCabeceraAza,
+        // accion=SELECT_DESCARGAS). No documentado en el PDF; confirmado por ejemplo real de
+        // uso, ver docs/lux-api-analysis.md §15.
+        const descargas = await catalogosService.selectDescargas(cabecera.propietario, almacen);
         renderPage(req, res, next, 'recepcionDetail', {
           title: `Recepcion ${idAlbaran}`,
           idAlbaran,
           cabecera,
           datosExtra,
           lineas,
+          descargas,
           error: null,
         });
       })
@@ -286,6 +293,7 @@ export function createWebRouter(deps: WebRouterDependencies): Router {
           cabecera: null,
           datosExtra: null,
           lineas: [],
+          descargas: [],
           error: describeError(err),
         });
       });
