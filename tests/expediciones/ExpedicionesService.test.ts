@@ -254,4 +254,29 @@ describe('ExpedicionesService', () => {
     expect(contenedores).toHaveLength(1);
     expect(contenedores[0]!.contenedor).toBe('C03001');
   });
+
+  it('obtenerResumenListadoExpedicion filtra p_expedicionesAza por pedido exacto (sin comodin)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        expect(proc).toBe('p_expedicionesAza');
+        expect(body).toEqual({ accion: 'SELECT', pedido: 'PED-0001' });
+        return {
+          status: 200,
+          body: [{ id: '1234', pedido: 'PED-0001', transportista: 'SEUR', ruta: 'RT001' }],
+        };
+      },
+    });
+    const resumen = await service.obtenerResumenListadoExpedicion('PED-0001');
+    expect(resumen?.transportista).toBe('SEUR');
+  });
+
+  it('obtenerResumenListadoExpedicion no llama a LUX si el pedido viene vacio', async () => {
+    mock.updateOptions({
+      onProc: () => {
+        throw new Error('No deberia llamar a LUX con pedido vacio');
+      },
+    });
+    const resumen = await service.obtenerResumenListadoExpedicion('');
+    expect(resumen).toBeUndefined();
+  });
 });

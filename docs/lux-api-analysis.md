@@ -506,6 +506,23 @@ de whitelist local), independientemente de que LUX ya valide el prefijo `p_` y d
 * Confirmado que `PUT /proc/p_expedicionesAza` con `accion: "SELECT"` funciona end-to-end a través
   de nuestra API propia (`GET /api/expediciones`), incluyendo login automático y filtros
   (`propietario`, `estado`).
+* El PDF (§6.3) solo documenta las columnas "principales" del visor de expediciones. Contra el
+  servidor real, `p_expedicionesAza`/`SELECT` devuelve **62 columnas**, muchas más de las
+  documentadas — incluye además flags internos de la UI de Whales
+  (`action#imprimir`, `action#BLOQUEAR`, `action#ASIGNAR`, `action#DESASIGNAR`, `action#edit`,
+  `action#delete`, `action#ANULAR`, `action#REABRIR`, `action#MULTI`, `action#OLEADA`,
+  `action#DESAGRUPAR`, `action#DESAGRUPAR_AGRUPACION`, `action#CERRAR_OFICINA`,
+  `action#DESBLOQUEAR`, `action#PASAR_ALMACEN_WMS`, `action#PASAR_PICKING_ALMACEN_WMS`) y campos
+  de uso interno no documentados (`colorEstado`, `txtAlbaran`, `txtPicking`, `extraMostrar`,
+  `extra1`, `extra2`, `generarDeca`, `saltarConsolidacion`, `almacenVirtual`, `oleada`,
+  `paletizado`, `descripcionRuta`, `numContenedores`, `numPalets`, `pallets`, `volumen`, `peso`,
+  `direccion`, `poblacion`, `provincia`, `pais`, `contacto`, `deliveryNumber`, `agrupacion`,
+  `pedidoCliente`, `fechaRuta`, `muelle`). El resto (`transportista`, `ruta`, `prioridad`,
+  `unidades`, `fechaCreacion`, `fechaCerrado`, `nivelServicio`, `fechaEntrega`,
+  `facturarTransporte`, `carga`, `expedicion`, `observaciones`, `lineas`) coincide con §6.3.
+  Estos campos se exponen sin filtrar como `resumenListado` en el detalle de expedición
+  (`GET /api/expediciones/:idPedido` y `/almacen/expediciones/:id`), a petición explícita del
+  usuario — ver `docs/progress.md` fase 17.
 
 ## 14. `p_expPedidoContenedores` — no documentado en el PDF, confirmado por prueba directa (2026-09-29)
 

@@ -196,7 +196,10 @@ export function createWebRouter(deps: WebRouterDependencies): Router {
       expedicionesService.obtenerLineasExpedicion(idPedido, almacen),
       expedicionesService.obtenerContenedoresExpedicion(idPedido, almacen),
     ])
-      .then(([cabecera, datosExtra, lineas, contenedores]) => {
+      .then(async ([cabecera, datosExtra, lineas, contenedores]) => {
+        // Fila completa del visor (p_expedicionesAza): columnas que no trae p_expCabeceraAza
+        // (transportista, ruta, muelle, prioridad, etc.), ver docs/lux-api-analysis.md §6.3.
+        const resumenListado = await expedicionesService.obtenerResumenListadoExpedicion(cabecera.pedido, almacen);
         renderPage(req, res, next, 'expedicionDetail', {
           title: `Expedicion ${idPedido}`,
           idPedido,
@@ -204,6 +207,7 @@ export function createWebRouter(deps: WebRouterDependencies): Router {
           datosExtra,
           lineas,
           contenedores,
+          resumenListado,
           error: null,
         });
       })
@@ -215,6 +219,7 @@ export function createWebRouter(deps: WebRouterDependencies): Router {
           datosExtra: null,
           lineas: [],
           contenedores: [],
+          resumenListado: null,
           error: describeError(err),
         });
       });

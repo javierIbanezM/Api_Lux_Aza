@@ -166,6 +166,26 @@ export class ExpedicionesService {
     return rows[0] ?? {};
   }
 
+  /**
+   * Fila completa del visor/listado (p_expedicionesAza, accion=SELECT) para un pedido conocido.
+   * Trae columnas que NO devuelve p_expCabeceraAza (transportista, ruta, muelle, prioridad,
+   * unidades, fechaCreacion, etc. -- ver docs/lux-api-analysis.md §6.3), utiles para el detalle.
+   * Filtra por `pedido` exacto (sin comodin "%"): la documentacion no permite filtrar el listado
+   * por `id`, solo por `pedido` (texto). Si `pedido` viene vacio, no llama a LUX.
+   */
+  async obtenerResumenListadoExpedicion(pedido: string, almacen?: string): Promise<ExpedicionListItem | undefined> {
+    if (!pedido) {
+      return undefined;
+    }
+    const rows = await this.luxClient.callProc(
+      'p_expedicionesAza',
+      'SELECT',
+      { pedido },
+      { operacion: 'expediciones.obtenerResumenListadoExpedicion', almacen },
+    );
+    return rows[0] as ExpedicionListItem | undefined;
+  }
+
   async obtenerLineasExpedicion(idPedido: string, almacen?: string): Promise<ExpedicionLinea[]> {
     const rows = await this.luxClient.callProc(
       'p_expPedidoLineas',

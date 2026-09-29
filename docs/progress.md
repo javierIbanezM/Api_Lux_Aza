@@ -19,6 +19,34 @@
 | 14 — `p_expPedidoContenedores` (contenedores/bultos de expedición) | COMPLETADO | No documentado en el PDF; confirmado por prueba directa contra LUX real. Ver sección siguiente. |
 | 15 — Ordenación de columnas en listados (`/almacen`) | COMPLETADO | `src/web/sorting.ts`. Clic en cabecera (Id, Pedido, Propietario, Cliente, Estado, Tipo, Fecha / Id, Albaran, Propietario, Estado) alterna asc/desc, preservando filtros. Verificado con datos reales. |
 | 16 — Soporte multi-almacén | COMPLETADO | `src/lux/warehouses.ts`, cabecera `Almacen` opcional en `/api/*`, selector en `/almacen`. Ver sección siguiente. |
+| 17 — Datos completos del visor en el detalle de expedición | COMPLETADO | `resumenListado` (65 campos reales de `p_expedicionesAza`) en `/api/expediciones/:id` y en `/almacen/expediciones/:id`. Ver sección siguiente. |
+
+## Fase 17 — Datos completos del visor en el detalle (2026-09-29)
+
+El usuario señaló que `PUT /proc/p_expedicionesAza` (visor de expediciones) devuelve muchas más
+columnas (62 reales, confirmadas contra LUX) de las que se mostraban en el listado web (7) o en
+el detalle (que solo traía lo de `p_expCabeceraAza`, un procedimiento distinto con columnas
+distintas — no incluye `transportista`, `ruta`, `muelle`, `prioridad`, `unidades`,
+`fechaCreacion`, etc.).
+
+Decisión (confirmada con el usuario): añadir **todos** esos campos, sin filtrar, a la página de
+**detalle** de expedición (no a la tabla de listado).
+
+* Nuevo método `ExpedicionesService.obtenerResumenListadoExpedicion(pedido, almacen)`: llama a
+  `p_expedicionesAza` con `accion=SELECT` filtrando por `pedido` exacto (sin `%`), ya que el
+  listado no admite filtrar por `id` (solo por `pedido`, texto, LIKE). Se ejecuta después de
+  obtener la cabecera (necesita su campo `pedido`); si `pedido` viene vacío, no llama a LUX.
+* `GET /api/expediciones/:idPedido` ahora incluye `resumenListado` en el detalle (junto a
+  `cabecera`, `datosExtra`, `lineas`, `contenedores`).
+* `/almacen/expediciones/:id` muestra una tarjeta nueva "Datos del listado (p_expedicionesAza)"
+  con **todos** los campos devueltos (sin curar), igual que ya se hace con la cabecera.
+* Verificado contra LUX real (pedido 180278/id 5034): 65 campos reales, incluyendo
+  `transportista=FEDEX`, `ruta=FEDCAM2704`, `prioridad=0`.
+
+Tests: 110/110 en verde. Nuevos: 2 unitarios en `ExpedicionesService.test.ts`
+(`obtenerResumenListadoExpedicion` con filtro exacto por pedido, y que no llama a LUX si el
+pedido está vacío), y el test de integración de detalle de expediciones ampliado para cubrir
+`resumenListado`.
 
 ## Fase 16 — Multi-almacén (2026-09-29)
 

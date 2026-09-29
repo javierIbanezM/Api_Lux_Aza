@@ -195,8 +195,14 @@ describe('Integracion: flujo completo de alta de expedicion', () => {
   it('lista expediciones y consulta el detalle completo (cabecera + extra + lineas)', async () => {
     mock.updateOptions({
       onProc: (proc, body) => {
-        if (proc === 'p_expedicionesAza') {
+        if (proc === 'p_expedicionesAza' && body.propietario === 'AZA') {
           return { status: 200, body: [{ id: '1234', pedido: 'PED-0001', estado: 'PENDIENTE' }] };
+        }
+        if (proc === 'p_expedicionesAza' && body.pedido === 'PED-0001') {
+          return {
+            status: 200,
+            body: [{ id: '1234', pedido: 'PED-0001', estado: 'PENDIENTE', transportista: 'SEUR', ruta: 'RT001', prioridad: '0' }],
+          };
         }
         if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
           return { status: 200, body: [{ mensaje: 'OK', idPedido: '1234', pedido: 'PED-0001' }] };
@@ -225,6 +231,8 @@ describe('Integracion: flujo completo de alta de expedicion', () => {
     expect(detalle.body.lineas).toHaveLength(1);
     expect(detalle.body.contenedores).toHaveLength(1);
     expect(detalle.body.contenedores[0].contenedor).toBe('C03001');
+    expect(detalle.body.resumenListado.transportista).toBe('SEUR');
+    expect(detalle.body.resumenListado.ruta).toBe('RT001');
   });
 
   it('la cabecera Almacen de la peticion se reenvia a LUX; sin ella se usa el almacen por defecto', async () => {

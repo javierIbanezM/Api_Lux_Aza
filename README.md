@@ -4,6 +4,28 @@ Integración de **AZA Logistics** con la API **LUX (Whales)**: autenticación, c
 resiliente hacia LUX y una API REST propia (`/api/expediciones`, `/api/recepciones`,
 `/api/catalogos`) que envuelve los procedimientos almacenados autorizados.
 
+## Arrancar el servicio
+
+```bash
+npm install
+cp .env.example .env
+# Rellenar en .env: LUX_BASE_URL, LUX_USERNAME, LUX_PASSWORD, LUX_WAREHOUSE, AZA_API_KEY,
+# SESSION_SECRET (ver seccion "Configuracion" mas abajo para el detalle de cada variable)
+
+npm run dev
+# o en "produccion": npm run build && npm start
+```
+
+El servidor queda escuchando en `http://localhost:3000` (o el `PORT` configurado):
+
+* API propia: `http://localhost:3000/api/...` (requiere cabecera `X-Api-Key`, ver más abajo).
+* Documentación interactiva: `http://localhost:3000/docs` (Swagger UI).
+* Interfaz web de almacén: `http://localhost:3000/almacen/login` (requiere crear antes un
+  usuario con `npm run create-web-user -- <usuario> <password>`).
+* Salud del proceso: `http://localhost:3000/health/live`.
+
+Ver la sección [Ejecutar](#ejecutar) para más detalle y todos los endpoints expuestos.
+
 Documentación de referencia (fuente de verdad, no reinterpretar):
 
 * [`docs/lux-api-analysis.md`](docs/lux-api-analysis.md) — análisis literal de la API LUX.

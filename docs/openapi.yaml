@@ -82,9 +82,12 @@ paths:
       responses:
         '200':
           description: >
-            Detalle completo: { cabecera, datosExtra, lineas, contenedores }. `contenedores`
-            viene de p_expPedidoContenedores, no documentado en la guia del proveedor (ver
-            docs/lux-api-analysis.md #14).
+            Detalle completo: { cabecera, datosExtra, lineas, contenedores, resumenListado }.
+            `contenedores` viene de p_expPedidoContenedores, no documentado en la guia del
+            proveedor (ver docs/lux-api-analysis.md #14). `resumenListado` es la fila completa
+            (todas las columnas, sin filtrar) que devuelve p_expedicionesAza/SELECT filtrando por
+            el numero de pedido exacto -- trae columnas que p_expCabeceraAza no incluye
+            (transportista, ruta, muelle, prioridad, etc; ver docs/lux-api-analysis.md #13).
     put:
       summary: Actualizar cabecera de expedicion
       parameters:
