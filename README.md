@@ -16,6 +16,11 @@ npm run dev
 # o en "produccion": npm run build && npm start
 ```
 
+El `.env` se carga automaticamente (via `dotenv`) al arrancar — no hace falta exportar las
+variables a mano en la terminal (PowerShell, CMD, bash...). Si cambias algo en `.env`, para y
+vuelve a arrancar el proceso: los cambios de codigo se recargan solos (`tsx watch`), pero las
+variables de entorno solo se releen al arrancar.
+
 El servidor queda escuchando en `http://localhost:3000` (o el `PORT` configurado):
 
 * API propia: `http://localhost:3000/api/...` (requiere cabecera `X-Api-Key`, ver más abajo).

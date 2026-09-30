@@ -22,6 +22,71 @@
 | 17 — Datos completos del visor en el detalle de expedición | COMPLETADO | `resumenListado` (65 campos reales de `p_expedicionesAza`) en `/api/expediciones/:id` y en `/almacen/expediciones/:id`. Ver sección siguiente. |
 | 18 — Columnas faltantes en tabla de contenedores (`pallet` y otras) | COMPLETADO | `pallet`, `fechaCaducidad`, `observaciones`, dimensiones y peso añadidos a `/almacen/expediciones/:id` → Contenedores (ya los devolvía la API, faltaban en la tabla web). |
 | 19 — Zonas de descarga (`SELECT_DESCARGAS`) por propietario en detalle de recepción | COMPLETADO | `CatalogosService.selectDescargas` ahora acepta `propietario`; nuevo campo `descargas` en `/api/recepciones/:id` y `/almacen/recepciones/:id`. Ver sección siguiente. |
+| 20 — Tablas de Líneas completas en `/almacen` | COMPLETADO | Columnas dinámicas (34 campos reales en expediciones, 30 en recepciones) en vez de 5 fijas; excluye solo flags `action#*` de la UI de Whales. Ver sección siguiente. |
+| 21 — Corrección de host/credenciales LUX mal configurados | COMPLETADO | `.env` apuntaba a un entorno LUX distinto (`.140`) con datos muy diferentes; corregido a `.145` + `interfaz`. Ver sección siguiente. |
+| 22 — Carga automática de `.env` (`dotenv`) | COMPLETADO | La app no leía `.env` por sí sola; había que exportarlo a mano en la terminal antes de `npm run dev`/`npm start`. Ver sección siguiente. |
+
+## Fase 22 — Carga automática de `.env` (2026-09-30)
+
+El usuario reportó que `npm run dev` "no hacía nada" en PowerShell. Causa: la aplicación nunca
+usó `dotenv` — dependía de que las variables de entorno ya estuvieran exportadas en el shell
+antes de arrancar (así se había estado probando manualmente durante todo el desarrollo, con
+`set -a; source .env; set +a` en bash). En PowerShell/CMD, sin ese paso, `loadConfig()` falla
+rápido con "Falta la variable de entorno obligatoria" y el proceso termina — fácil de no ver si
+la terminal no se mira con atención.
+
+* Añadida dependencia `dotenv`; `src/server.ts` ahora empieza con `import 'dotenv/config'` (antes
+  de cualquier otro import), que carga `.env` en `process.env` automáticamente al arrancar.
+* Verificado arrancando el proceso en un shell limpio, sin exportar nada a mano: arranca y
+  responde `200` en `/health/live`.
+* `scripts/createWebUser.ts` no necesita el cambio (no lee configuración de LUX).
+* Documentado en `README.md`: `.env` se carga solo; para aplicar cambios en `.env` hay que
+  reiniciar el proceso completo (los cambios de código sí se recargan solos vía `tsx watch`).
+
+## Nota sobre fase 21 — `.140` es PRO, `.145` es DEV
+
+Aclaración posterior del usuario (comentarios añadidos al propio `.env`): `.140` + `apiUser` es
+el entorno de **producción**, `.145` + `interfaz` es el de **desarrollo/pruebas**. No fue un
+error real tener `.140` configurado — dependía de contra qué entorno se quisiera trabajar en cada
+momento. Mantener esta distinción en cuenta en futuras confusiones de host/credenciales.
+
+## Fase 21 — Host/credenciales LUX incorrectos en `.env` (2026-09-30)
+
+El usuario reportó que las expediciones en estado `ENVIADO` no aparecían. Diagnóstico: no era un
+bug de código — `.env` tenía `LUX_BASE_URL=http://192.168.2.140:8081` con
+`LUX_USERNAME=apiUser`, un **entorno LUX distinto** al `.145` usado hasta ahora, con datos mucho
+más limitados (solo 7 expediciones para CAMELIA, todas `BLOQUEADO`, frente a las 529 en `.145`).
+
+Confirmado con el usuario que `.145` + `interfaz`/`Valencia.2026` es la combinación correcta;
+`.env` corregido y servidor reiniciado. Verificado: `propietario=CAMELIA&estado=ENVIADO` devuelve
+ahora 204 filas reales.
+
+**Lección operativa importante** (documentada en README): cambiar `LUX_BASE_URL` (o cualquier
+variable) en `.env` **no se recarga sola** — hace falta parar el proceso por completo y volver a
+arrancarlo (`npm run dev`/`npm start`), a diferencia de los cambios de código, que `tsx watch` sí
+recarga automáticamente. Se detectó porque el proceso en marcha seguía usando el host antiguo
+pese a haber editado `.env` hacía rato.
+
+## Fase 20 — Tablas de Líneas completas (2026-09-30)
+
+Continuación de la fase 18: el usuario pidió que las tablas de Líneas (expediciones y
+recepciones) también mostraran todos los campos reales, "salvo que se duplique con el resultado
+de otra consulta". Comprobado contra LUX real:
+
+* `p_expPedidoLineas/SELECT` (pedido 180278/id 5034): **34 campos** —
+  `cantidadServida`, `cantidadReservada`, `faltas`, `estadoStock`, `motivoDiscrepancias`,
+  `infoReserva`, etc. Ninguno duplica realmente los datos de otras tarjetas del detalle (aunque
+  algunos comparten nombre con columnas de `resumenListado`, son valores por línea, no por
+  pedido).
+* `p_recAlbaranLineas/SELECT` (albarán id 4023): **30 campos** — `piezasRecepcionadas`, `coste`,
+  `revisionCalidad`, `storageLocation`, `pedidoCompra`, etc.
+
+Se excluyen únicamente `action#edit`/`action#delete` (botones internos de la UI de Whales, no son
+datos) de ambas tablas; el resto de columnas se renderiza dinámicamente (igual que "Datos del
+listado" y "Contenedores"), envuelto en scroll horizontal.
+
+Tests: 113/113 en verde (sin cambios de contrato de API, es un cambio puramente de presentación
+en las vistas `/almacen/*`; no requiere tests nuevos porque la API ya devolvía todos los campos).
 
 ## Fase 19 — Zonas de descarga por propietario (2026-09-29)
 

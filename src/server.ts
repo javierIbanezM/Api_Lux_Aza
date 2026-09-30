@@ -1,3 +1,7 @@
+// Debe ser el primer import: carga .env en process.env antes de que loadConfig() lo lea.
+// Sin esto, arrancar con "npm run dev"/"npm start" directamente en una terminal que no haya
+// cargado .env a mano (p.ej. PowerShell) fallaba con "Falta la variable de entorno obligatoria".
+import 'dotenv/config';
 import { loadConfig } from './config';
 import { createLogger } from './logging';
 import { buildDependencies, createApp } from './app';

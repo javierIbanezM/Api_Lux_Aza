@@ -44,33 +44,37 @@
   </div>
 <% } %>
 
+<%
+  // Flags internos de botones de la UI de Whales (no son datos): se excluyen de la tabla.
+  var lineaColumnas = lineas.length > 0
+    ? Object.keys(lineas[0]).filter(function(k) { return k.indexOf('action#') !== 0; })
+    : [];
+%>
 <div class="card">
   <h3>Lineas</h3>
+  <div style="overflow-x:auto;">
   <table>
     <thead>
       <tr>
-        <th>Id</th>
-        <th>Referencia</th>
-        <th>Cantidad pedida</th>
-        <th>Lote</th>
-        <th>Observaciones</th>
+        <% lineaColumnas.forEach(function(key) { %>
+          <th><%= key %></th>
+        <% }); %>
       </tr>
     </thead>
     <tbody>
       <% if (lineas.length === 0) { %>
-        <tr><td colspan="5">Sin lineas.</td></tr>
+        <tr><td>Sin lineas.</td></tr>
       <% } %>
       <% lineas.forEach(function(linea) { %>
         <tr>
-          <td><%= linea.id %></td>
-          <td><%= linea.referencia %></td>
-          <td><%= linea.cantidadPedida %></td>
-          <td><%= linea.lote %></td>
-          <td><%= linea.observaciones %></td>
+          <% lineaColumnas.forEach(function(key) { %>
+            <td><%= linea[key] %></td>
+          <% }); %>
         </tr>
       <% }); %>
     </tbody>
   </table>
+  </div>
 </div>
 
 <div class="card">
