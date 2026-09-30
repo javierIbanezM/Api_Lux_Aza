@@ -27,6 +27,27 @@ En **produccion** (`npm start`, que ejecuta `node dist/src/server.js` ya compila
 watch`) esto no aplica: si cambias `.env` ahi, hay que parar y volver a arrancar el proceso a
 mano (o dejar que el orquestador — PM2, systemd, Docker, etc. — lo reinicie).
 
+**El watcher de logs (`npm run watch-logs`) NO se recarga solo nunca** — ni con cambios de codigo
+ni de `.env` (no usa `tsx watch`, ver `package.json`) — asi que tras cualquier cambio (credenciales,
+almacen, nuevas reglas de deteccion, etc.) hay que pararlo y volver a arrancarlo a mano. En
+**desarrollo**, aunque `npm run dev` normalmente detecta los cambios de `.env` solo, si tienes dudas
+de que se haya recargado (o simplemente quieres asegurarte) es igual de valido reiniciarlo a mano:
+
+```powershell
+# Parar (localiza y mata solo los procesos de este proyecto, nunca "todo node.exe")
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+  Where-Object { $_.CommandLine -like '*src/server.ts*' -or $_.CommandLine -like '*run dev*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+  Where-Object { $_.CommandLine -like '*watchLuxLogs*' -or $_.CommandLine -like '*run watch-logs*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+# Arrancar de nuevo
+npm run dev          # servidor HTTP
+npm run watch-logs   # watcher de logs (proceso aparte, en otra terminal)
+```
+
 El servidor queda escuchando en `http://localhost:3000` (o el `PORT` configurado):
 
 * API propia: `http://localhost:3000/api/...` (requiere cabecera `X-Api-Key`, ver más abajo).
@@ -191,6 +212,12 @@ la API.
     minúsculas y justo después del nombre (llamadas de nuestra propia API) o en **mayúsculas y en
     cualquier posición** de la línea (llamadas desde la UI de LUX/PDA). El motor de patrones lo
     detecta en ambos casos — esto fue un bug real corregido en la fase 26, no una teoría.
+* **Multi-almacén**: los mismos 2 ficheros de log contienen actividad de los 5 almacenes
+  (SAGUNTO, ALMUSSAFES, CHESTECM, CHESTE, MONTAVERNER) — no hay un log por almacén. El watcher
+  extrae el `almacen` de cada línea y lo usa en la re-consulta (cabecera `Almacen` hacia LUX);
+  usar el almacén por defecto de la configuración en vez del real haría que LUX devolviera datos
+  vacíos/incorrectos para cualquier pedido que no fuera de ese almacén por defecto (confirmado
+  contra el servidor real).
 * Al detectar una, hace la **re-consulta completa** del pedido/albarán afectado contra LUX
   (reutilizando `ExpedicionesService`/`RecepcionesService` directamente, sin pasar por `/api/*`):
   para expediciones, cabecera (`p_expCabeceraAza`) + **listado** (`p_expedicionesAza`, fila

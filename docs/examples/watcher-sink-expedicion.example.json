@@ -2,6 +2,7 @@
   "_nota": "Ejemplo de la forma EXACTA del objeto que recibe WatcherSink.onExpedicionActualizada (ver src/watcher/watcherSink.ts). Es un COMPUESTO de fragmentos reales capturados en distintos momentos de esta sesion (no de un unico pedido): idPedido/pedido/propietario/cabecera vienen de EXP0000078 (FARMALIDER, 30-sep-2026); 'listado' es el ejemplo real de p_expedicionesAza que paso el usuario (pedido 164-EDI/KAPALUA); 'lineas' y 'contenedores' son los ejemplos reales de p_expPedidoLineas/p_expPedidoContenedores que tambien paso el usuario. Los nombres de campo son 100% reales; los valores concretos de cada bloque pueden no coincidir entre si porque son de pedidos distintos. Quitar este campo '_nota' antes de usarlo como fixture de test si hace falta un JSON estricto.",
   "idPedido": "11122",
   "pedido": "EXP0000078",
+  "almacen": "SAGUNTO",
   "propietario": "FARMALIDER",
   "estado": "PENDIENTE",
   "motivos": ["expedicionCabeceraActualizada", "expedicionLineaModificada", "expedicionPasadaAlmacen"],

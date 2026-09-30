@@ -6,14 +6,14 @@ describe('watcher/actionPatterns', () => {
     const line =
       "30-sep-2026 12:46:39 INFO:   [] exec p_wm_expSinConsolidar @estado='CERRAR',@valor='',@almacen='SAGUNTO',@usuario='JIbanezM',@valor2='326857',@terminal='900b9768d4eb624f',@identificador='11115'";
     const event = matchActionLine(line);
-    expect(event).toEqual({ type: 'expedicionCerradaPicking', idPedido: '11115', rawLine: line });
+    expect(event).toEqual({ type: 'expedicionCerradaPicking', idPedido: '11115', almacen: 'SAGUNTO', rawLine: line });
   });
 
   it('detecta el cierre fisico de una recepcion desde la PDA (p_wm_recepcionCerrar, caso real REC0000068)', () => {
     // Linea real confirmada (30-sep-2026 15:36:59, REC0000068, identificador='7838').
     const line =
       "30-sep-2026 15:36:59 INFO:   [] exec p_wm_recepcionCerrar @estado='CONFIRMAR_CERRAR',@valor='',@almacen='SAGUNTO',@usuario='ARodriguezSP',@valor2='326859',@terminal='94fdca19a3326f42',@identificador='7838'";
-    expect(matchActionLine(line)).toEqual({ type: 'recepcionCerradaPicking', idAlbaran: '7838', rawLine: line });
+    expect(matchActionLine(line)).toEqual({ type: 'recepcionCerradaPicking', idAlbaran: '7838', almacen: 'SAGUNTO', rawLine: line });
 
     // Pasos posteriores (captura de datos, no el cierre en si) no deben disparar nada.
     expect(
@@ -34,7 +34,12 @@ describe('watcher/actionPatterns', () => {
     // (valor='') varias veces por linea; solo dispara cuando valor trae la HU escaneada.
     const confirmada =
       "30-sep-2026 15:36:53 INFO:   [] exec p_wm_recepcion @estado='SELECT_MOVIMIENTO',@valor='TAS3009261536',@almacen='SAGUNTO',@usuario='ARodriguezSP',@valor2='326858',@terminal='94fdca19a3326f42',@identificador='7838'";
-    expect(matchActionLine(confirmada)).toEqual({ type: 'recepcionLineaConfirmada', idAlbaran: '7838', rawLine: confirmada });
+    expect(matchActionLine(confirmada)).toEqual({
+      type: 'recepcionLineaConfirmada',
+      idAlbaran: '7838',
+      almacen: 'SAGUNTO',
+      rawLine: confirmada,
+    });
 
     // Las 4 apariciones previas del mismo estado, con valor vacio (menu intermedio tras
     // referencia/lote/caducidad/cantidad), no deben disparar nada.
@@ -51,14 +56,14 @@ describe('watcher/actionPatterns', () => {
     const line =
       "30-sep-2026 12:46:48 INFO:   [] exec p_expediciones @accion='CERRAR_OFICINA_FIN_FORZAR',@almacen='SAGUNTO',@usuario='JIbanezM',@id='11115'";
     const event = matchActionLine(line);
-    expect(event).toEqual({ type: 'expedicionCerradaOficina', idPedido: '11115', rawLine: line });
+    expect(event).toEqual({ type: 'expedicionCerradaOficina', idPedido: '11115', almacen: 'SAGUNTO', rawLine: line });
   });
 
   it('detecta el envio forzado de una ruta (LUX)', () => {
     const line =
       "30-sep-2026 12:57:22 INFO:   [] exec p_expRutas @accion='ENVIAR_FORZAR',@almacen='SAGUNTO',@usuario='JIbanezM',@id='4487'";
     const event = matchActionLine(line);
-    expect(event).toEqual({ type: 'rutaEnviada', idRuta: '4487', rawLine: line });
+    expect(event).toEqual({ type: 'rutaEnviada', idRuta: '4487', almacen: 'SAGUNTO', rawLine: line });
   });
 
   it('ignora lineas de solo lectura (SELECT) sobre los mismos procedimientos', () => {
@@ -79,13 +84,13 @@ describe('watcher/actionPatterns', () => {
     // Linea real confirmada (30-sep-2026 15:26:47, EXP0000076/DIPISTOL, id='11120').
     const line =
       "30-sep-2026 15:26:47 INFO:   [] exec p_expediciones @accion='REABRIR_FORZAR',@almacen='SAGUNTO',@usuario='JIbanezM',@id='11120'";
-    expect(matchActionLine(line)).toEqual({ type: 'expedicionReabierta', idPedido: '11120', rawLine: line });
+    expect(matchActionLine(line)).toEqual({ type: 'expedicionReabierta', idPedido: '11120', almacen: 'SAGUNTO', rawLine: line });
   });
 
   it('detecta la anulacion forzada de una expedicion (p_expediciones @accion=ANULAR_FIN_FORZAR)', () => {
     const line =
       "30-sep-2026 16:00:00 INFO:   [] exec p_expediciones @accion='ANULAR_FIN_FORZAR',@almacen='SAGUNTO',@usuario='JIbanezM',@id='11121'";
-    expect(matchActionLine(line)).toEqual({ type: 'expedicionAnulada', idPedido: '11121', rawLine: line });
+    expect(matchActionLine(line)).toEqual({ type: 'expedicionAnulada', idPedido: '11121', almacen: 'SAGUNTO', rawLine: line });
   });
 
   it('ignora lineas que no son de exec en absoluto', () => {
@@ -147,7 +152,7 @@ describe('watcher/actionPatterns', () => {
     const pasar = matchActionLine(
       "30-sep-2026 14:29:19 INFO:   [] exec p_recepciones @accion='PASAR_ALMACEN',@almacen='SAGUNTO',@usuario='ARodriguezSP',@id='7838'",
     );
-    expect(pasar).toEqual({ type: 'recepcionPasadaAlmacen', idAlbaran: '7838', rawLine: pasar?.rawLine });
+    expect(pasar).toEqual({ type: 'recepcionPasadaAlmacen', idAlbaran: '7838', almacen: 'SAGUNTO', rawLine: pasar?.rawLine });
 
     const fin = matchActionLine(
       "30-sep-2026 14:29:20 INFO:   [] exec p_recepciones @accion='PASAR_ALMACEN_FIN',@almacen='SAGUNTO',@usuario='ARodriguezSP',@id='7838'",

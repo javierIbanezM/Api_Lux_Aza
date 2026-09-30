@@ -13,6 +13,10 @@ import type {
 export interface ExpedicionActualizada {
   idPedido?: string;
   pedido: string;
+  /** Almacen real de este pedido (ver actionPatterns.ts): los mismos 2 ficheros de log traen
+   *  actividad de los 5 almacenes, asi que esto NO es el almacen por defecto de la configuracion,
+   *  es el que llevaba la linea de log que disparo este evento. */
+  almacen?: string;
   propietario?: string;
   estado?: string;
   motivos: ActionEventType[];
@@ -33,6 +37,8 @@ export interface ExpedicionActualizada {
 export interface AlbaranActualizado {
   idAlbaran?: string;
   albaran: string;
+  /** Almacen real de este albaran (ver actionPatterns.ts), no el por defecto de la configuracion. */
+  almacen?: string;
   propietario?: string;
   estado?: string;
   motivos: ActionEventType[];

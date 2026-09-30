@@ -192,6 +192,36 @@ describe('watcher/LuxActionWatcher', () => {
     expect(evento).toMatchObject({ idPedido: '11115', estado: 'CERRADO', motivos: 'expedicionCerradaOficina' });
   });
 
+  it('re-consulta usando el almacen REAL de la linea de log, no el almacen por defecto de la configuracion (bug multi-almacen)', async () => {
+    // El almacen por defecto de este test es 'ALM01' (ver tests/mocks/testConfig.ts), distinto de
+    // 'MONTAVERNER': si el watcher usara el almacen por defecto en vez del real de la linea (como
+    // hacia antes de este fix), LUX devolveria datos vacios/incorrectos para cualquier pedido que
+    // no fuera del almacen por defecto (confirmado contra el servidor real).
+    mock.updateOptions({
+      onProc: (proc, body, headers) => {
+        expect(headers.almacen).toBe('MONTAVERNER');
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: '11060', pedido: 'PRUEBA KITS21' }] };
+        }
+        if (proc === 'p_expedicionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '11060', pedido: 'PRUEBA KITS21', propietario: 'PANCRACIO', estado: 'EXPEDICION' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    await startAndWaitBaseline();
+
+    appendFileSync(
+      luxLogPath,
+      "30-sep-2026 12:46:48 INFO:   [] exec p_expediciones @accion='CERRAR_OFICINA_FIN_FORZAR',@almacen='MONTAVERNER',@usuario='JIbanezM',@id='11060'\n",
+    );
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.pedidoActualizado'));
+    const evento = logLines.find((l) => l.operacion === 'watcher.pedidoActualizado');
+    expect(evento).toMatchObject({ idPedido: '11060', almacen: 'MONTAVERNER', propietario: 'PANCRACIO', estado: 'EXPEDICION' });
+  });
+
   it('detecta "pasar a almacen" (LUX)', async () => {
     mock.updateOptions({
       onProc: (proc, body) => {
@@ -548,6 +578,7 @@ describe('watcher/LuxActionWatcher', () => {
     expect(onExpedicionActualizada).toHaveBeenCalledWith({
       idPedido: '11115',
       pedido: 'EXP0000074',
+      almacen: 'SAGUNTO',
       propietario: 'AZA LOGISTICS SLU',
       estado: 'CERRADO',
       motivos: ['expedicionCerradaOficina'],

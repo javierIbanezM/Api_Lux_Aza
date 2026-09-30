@@ -43,6 +43,12 @@ export interface DetectedEvent {
   albaran?: string;
   /** id de la ruta de transporte (solo para 'rutaEnviada'; no es un id de pedido). */
   idRuta?: string;
+  /** Almacen de la linea (`@almacen=`/`@ALMACEN=`), si la trae. LUX filtra los datos por almacen
+   *  (cabecera "Almacen"): sin esto, la re-consulta del watcher usaria el almacen por defecto de
+   *  la configuracion en vez del real, y devolveria vacio/incorrecto para cualquier pedido que no
+   *  sea de ese almacen por defecto. Confirmado contra el servidor real: SAGUNTO, ALMUSSAFES,
+   *  CHESTECM, CHESTE y MONTAVERNER generan actividad en los mismos 2 ficheros de log. */
+  almacen?: string;
   rawLine: string;
 }
 
@@ -269,7 +275,11 @@ export function matchActionLine(line: string): DetectedEvent | null {
     if (rule.extra && !rule.extra(line)) {
       continue;
     }
-    return rule.build(line);
+    const event = rule.build(line);
+    if (!event) {
+      continue;
+    }
+    return { ...event, almacen: extractParam(line, 'almacen') };
   }
   return null;
 }

@@ -2,6 +2,7 @@
   "_nota": "Ejemplo de la forma EXACTA del objeto que recibe WatcherSink.onAlbaranActualizado (ver src/watcher/watcherSink.ts). TODOS los valores de este fichero son REALES: capturados consultando directamente el servidor de LUX (curl PUT /proc/{procedimiento}) sobre REC0000068/FARMALIDER (idAlbaran 7838) el 30-sep-2026. Quitar este campo '_nota' antes de usarlo como fixture de test si hace falta un JSON estricto.",
   "idAlbaran": "7838",
   "albaran": "REC0000068",
+  "almacen": "SAGUNTO",
   "propietario": "FARMALIDER",
   "estado": "PTE. RECEPCION",
   "motivos": ["recepcionCabeceraActualizada", "recepcionLineaModificada", "recepcionPasadaAlmacen", "recepcionLineaConfirmada", "recepcionCerradaPicking"],

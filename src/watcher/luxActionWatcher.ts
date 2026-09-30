@@ -10,8 +10,8 @@ import type { WatcherConfig } from './watcherConfig';
 import { noopWatcherSink, type ExpedicionActualizada, type AlbaranActualizado, type WatcherSink } from './watcherSink';
 
 type PendingTarget =
-  | { domain: 'expedicion'; idPedido?: string; pedido?: string }
-  | { domain: 'recepcion'; idAlbaran?: string; albaran?: string };
+  | { domain: 'expedicion'; idPedido?: string; pedido?: string; almacen?: string }
+  | { domain: 'recepcion'; idAlbaran?: string; albaran?: string; almacen?: string };
 
 interface PendingRefresh {
   target: PendingTarget;
@@ -46,10 +46,20 @@ function keyFor(target: PendingTarget): string | undefined {
  *  del mismo pedido trae ademas `idPedido`, se conserva `idPedido`). */
 function mergeTarget(previous: PendingTarget, incoming: PendingTarget): PendingTarget {
   if (previous.domain === 'expedicion' && incoming.domain === 'expedicion') {
-    return { domain: 'expedicion', idPedido: incoming.idPedido ?? previous.idPedido, pedido: incoming.pedido ?? previous.pedido };
+    return {
+      domain: 'expedicion',
+      idPedido: incoming.idPedido ?? previous.idPedido,
+      pedido: incoming.pedido ?? previous.pedido,
+      almacen: incoming.almacen ?? previous.almacen,
+    };
   }
   if (previous.domain === 'recepcion' && incoming.domain === 'recepcion') {
-    return { domain: 'recepcion', idAlbaran: incoming.idAlbaran ?? previous.idAlbaran, albaran: incoming.albaran ?? previous.albaran };
+    return {
+      domain: 'recepcion',
+      idAlbaran: incoming.idAlbaran ?? previous.idAlbaran,
+      albaran: incoming.albaran ?? previous.albaran,
+      almacen: incoming.almacen ?? previous.almacen,
+    };
   }
   return incoming;
 }
@@ -150,16 +160,22 @@ export class LuxActionWatcher {
       }
 
       if (event.idAlbaran !== undefined || event.albaran !== undefined) {
-        this.scheduleRefresh({ domain: 'recepcion', idAlbaran: event.idAlbaran, albaran: event.albaran }, event.type);
+        this.scheduleRefresh(
+          { domain: 'recepcion', idAlbaran: event.idAlbaran, albaran: event.albaran, almacen: event.almacen },
+          event.type,
+        );
       } else {
-        this.scheduleRefresh({ domain: 'expedicion', idPedido: event.idPedido, pedido: event.pedido }, event.type);
+        this.scheduleRefresh(
+          { domain: 'expedicion', idPedido: event.idPedido, pedido: event.pedido, almacen: event.almacen },
+          event.type,
+        );
       }
     }
   }
 
   private async handleRutaEnviada(event: DetectedEvent): Promise<void> {
     try {
-      const pedidos = await resolverPedidosDeRuta(this.luxClient, event.idRuta as string);
+      const pedidos = await resolverPedidosDeRuta(this.luxClient, event.idRuta as string, event.almacen);
       if (pedidos.length === 0) {
         this.logger.warn('Ruta enviada pero no se resolvio ningun pedido asociado', {
           operacion: 'watcher.rutaSinPedidos',
@@ -169,7 +185,7 @@ export class LuxActionWatcher {
         return;
       }
       for (const idPedido of pedidos) {
-        this.scheduleRefresh({ domain: 'expedicion', idPedido }, 'rutaEnviada');
+        this.scheduleRefresh({ domain: 'expedicion', idPedido, almacen: event.almacen }, 'rutaEnviada');
       }
     } catch (err) {
       this.logger.error('No se pudo resolver los pedidos de la ruta enviada', {
@@ -222,6 +238,7 @@ export class LuxActionWatcher {
           resultado: 'OK',
           idPedido: result.idPedido,
           pedido: result.pedido,
+          almacen: entry.target.almacen,
           propietario: result.propietario,
           estado: result.estado,
           lineasCount: result.lineas.length,
@@ -240,6 +257,7 @@ export class LuxActionWatcher {
           resultado: 'OK',
           idAlbaran: result.idAlbaran,
           albaran: result.albaran,
+          almacen: entry.target.almacen,
           propietario: result.propietario,
           estado: result.estado,
           lineasCount: result.lineas.length,
@@ -302,35 +320,38 @@ export class LuxActionWatcher {
   private async refreshExpedicion(
     target: Extract<PendingTarget, { domain: 'expedicion' }>,
   ): Promise<Omit<ExpedicionActualizada, 'motivos'>> {
+    const { almacen } = target;
     const idPedidoDirecto = target.idPedido && target.idPedido !== '0' ? target.idPedido : undefined;
     let pedido = target.pedido;
     let cabecera: Expedicion | undefined;
 
     if (idPedidoDirecto) {
-      cabecera = await this.expedicionesService.obtenerExpedicion(idPedidoDirecto);
+      cabecera = await this.expedicionesService.obtenerExpedicion(idPedidoDirecto, almacen);
       pedido = pedido ?? cabecera.pedido;
     }
     if (!pedido) {
       throw new Error('No se pudo determinar el numero de pedido para re-consultar (sin idPedido ni pedido)');
     }
 
-    const resumen = await this.expedicionesService.obtenerResumenListadoExpedicion(pedido);
+    const resumen = await this.expedicionesService.obtenerResumenListadoExpedicion(pedido, almacen);
     const idPedido = idPedidoDirecto ?? resumen?.id;
 
     let lineas: ExpedicionLinea[] = [];
     let contenedores: ExpedicionContenedor[] = [];
     if (idPedido) {
       if (!cabecera) {
-        cabecera = await this.fetchBestEffort(() => this.expedicionesService.obtenerExpedicion(idPedido), 'cabecera');
+        cabecera = await this.fetchBestEffort(() => this.expedicionesService.obtenerExpedicion(idPedido, almacen), 'cabecera');
       }
-      lineas = (await this.fetchBestEffort(() => this.expedicionesService.obtenerLineasExpedicion(idPedido), 'lineas')) ?? [];
+      lineas = (await this.fetchBestEffort(() => this.expedicionesService.obtenerLineasExpedicion(idPedido, almacen), 'lineas')) ?? [];
       contenedores =
-        (await this.fetchBestEffort(() => this.expedicionesService.obtenerContenedoresExpedicion(idPedido), 'contenedores')) ?? [];
+        (await this.fetchBestEffort(() => this.expedicionesService.obtenerContenedoresExpedicion(idPedido, almacen), 'contenedores')) ??
+        [];
     }
 
     return {
       idPedido,
       pedido,
+      almacen,
       propietario: resumen?.propietario,
       estado: resumen?.estado,
       cabecera,
@@ -346,34 +367,36 @@ export class LuxActionWatcher {
   private async refreshRecepcion(
     target: Extract<PendingTarget, { domain: 'recepcion' }>,
   ): Promise<Omit<AlbaranActualizado, 'motivos'>> {
+    const { almacen } = target;
     const idAlbaranDirecto = target.idAlbaran && target.idAlbaran !== '0' ? target.idAlbaran : undefined;
     let albaran = target.albaran;
     let cabecera: Recepcion | undefined;
 
     if (idAlbaranDirecto) {
-      cabecera = await this.recepcionesService.obtenerRecepcion(idAlbaranDirecto);
+      cabecera = await this.recepcionesService.obtenerRecepcion(idAlbaranDirecto, almacen);
       albaran = albaran ?? cabecera.albaran;
     }
     if (!albaran) {
       throw new Error('No se pudo determinar el numero de albaran para re-consultar (sin idAlbaran ni albaran)');
     }
 
-    const resumen = await this.recepcionesService.obtenerResumenListadoRecepcion(albaran);
+    const resumen = await this.recepcionesService.obtenerResumenListadoRecepcion(albaran, almacen);
     const idAlbaran = idAlbaranDirecto ?? resumen?.id;
 
     let lineas: RecepcionLinea[] = [];
     let hus: RecepcionHU[] = [];
     if (idAlbaran) {
       if (!cabecera) {
-        cabecera = await this.fetchBestEffort(() => this.recepcionesService.obtenerRecepcion(idAlbaran), 'cabecera');
+        cabecera = await this.fetchBestEffort(() => this.recepcionesService.obtenerRecepcion(idAlbaran, almacen), 'cabecera');
       }
-      lineas = (await this.fetchBestEffort(() => this.recepcionesService.obtenerLineasRecepcion(idAlbaran), 'lineas')) ?? [];
-      hus = (await this.fetchBestEffort(() => this.recepcionesService.obtenerHUsRecepcion(idAlbaran), 'hus')) ?? [];
+      lineas = (await this.fetchBestEffort(() => this.recepcionesService.obtenerLineasRecepcion(idAlbaran, almacen), 'lineas')) ?? [];
+      hus = (await this.fetchBestEffort(() => this.recepcionesService.obtenerHUsRecepcion(idAlbaran, almacen), 'hus')) ?? [];
     }
 
     return {
       idAlbaran,
       albaran,
+      almacen,
       propietario: resumen?.propietario,
       estado: resumen?.estado,
       cabecera,
