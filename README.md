@@ -216,10 +216,11 @@ la API.
   en la carpeta `WATCHER_JSON_DIR` (por defecto `data/watcher-events/`, ya en `.gitignore`) — sirve
   para revisar exactamente qué datos llegan antes de decidir el mapeo. Ver ejemplos de la forma de
   ese JSON en `docs/examples/watcher-sink-expedicion.example.json` y
-  `watcher-sink-recepcion.example.json`. Cuando una expedición llega a `estado='ENVIADO'` (estado
-  final, ya no hay más cambios), en vez de guardar un JSON más se **borran todos los que hubiera de
-  ese pedido** — no aportan nada a partir de ahí. Un sink que falla no afecta al refresco ya
-  registrado (se loguea aparte como `watcher.sinkError`).
+  `watcher-sink-recepcion.example.json`. Como mucho hay **un fichero por pedido/albarán**: antes de
+  guardar uno nuevo se borra cualquier JSON previo del mismo pedido/albarán (si se duplica, se
+  queda el más reciente). Cuando una expedición llega a `estado='ENVIADO'` (estado final, ya no hay
+  más cambios) no se guarda ninguno nuevo — no aporta nada a partir de ahí. Un sink que falla no
+  afecta al refresco ya registrado (se loguea aparte como `watcher.sinkError`).
 * Variables propias (ver `.env.example`): `LUX_LOG_PATH`, `LUX_MOBILE_LOG_PATH` (rutas a los
   ficheros de log activos), `WATCHER_POLL_MS` (sondeo, por defecto 3 s),
   `WATCHER_DEBOUNCE_MS` (agrupa varias líneas seguidas del mismo pedido en una sola re-consulta,
@@ -249,7 +250,11 @@ El servidor expone:
 * `GET /health/ready` — readiness (valida configuración + estado cacheado de auth).
 * `GET|POST /api/expediciones`, `GET|PUT /api/expediciones/:idPedido`,
   `GET|POST /api/expediciones/:idPedido/lineas`, `PUT /api/expediciones/:idPedido/lineas/:idLinea`.
-* Equivalentes en `/api/recepciones`.
+* `GET /api/expediciones/datos-extra?propietario=X` — plantilla de datos extra (campos y valores
+  por defecto) para una expedición que **todavía no existe**, antes de crearla, filtrada por
+  propietario en vez de por `idPedido` (`p_expCabeceraAza SELECT_INICIO` con `propietario`, no
+  documentado en el PDF, confirmado contra el servidor real). Requiere el query param.
+* Equivalentes en `/api/recepciones` (incluye `GET /api/recepciones/datos-extra?propietario=X`).
 * `GET /api/catalogos/:tipo` (`cargas`, `service-level`, `descargas`, `transportistas`,
   `propietarios`, `tipos`, `pedido-estado`, `pedido-tipos`).
 * `GET|POST /almacen/login`, `POST /almacen/logout` — interfaz web de almacén (ver sección

@@ -9,6 +9,7 @@ export function createRecepcionesRouter(service: RecepcionesService, catalogosSe
 
   router.get('/', controller.listar);
   router.post('/', controller.crear);
+  router.get('/datos-extra', controller.obtenerDatosExtraPorPropietario);
   router.get('/:idAlbaran', controller.obtenerDetalle);
   router.put('/:idAlbaran', controller.actualizar);
   router.get('/:idAlbaran/lineas', controller.obtenerLineas);

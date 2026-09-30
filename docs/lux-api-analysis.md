@@ -596,3 +596,44 @@ ese propietario, con forma `{ "campo": "<descripción>" }`, p. ej.:
   la cabecera). Visible también en `/almacen/recepciones/:id`.
 * TODO — no confirmado: si `propietario` es estrictamente obligatorio o solo recomendado (sin él
   no se ha observado ningún error, solo una lista vacía).
+
+## 16. Watcher de logs LUX y otros procedimientos no documentados (2026-09-30)
+
+Ver `src/watcher/actionPatterns.ts` para la tabla completa de eventos de negocio detectados a
+partir de los logs de LUX (oficina + PDA de almacén), con las líneas reales que confirman cada
+uno. Resumen de procedimientos/acciones no documentados en el PDF, confirmados por observación
+directa del log o contra el servidor real:
+
+* `p_wm_expSinConsolidar @estado='CERRAR'` (PDA) — cierre de picking de una expedición.
+* `p_expediciones @accion='CERRAR_OFICINA_FIN_FORZAR'` — cierre de oficina forzado.
+* `p_expediciones @accion='REABRIR_FORZAR'` — reapertura forzada (confirmado en vivo, EXP0000076).
+* `p_expediciones @accion='ANULAR_FIN_FORZAR'` — anulación forzada.
+* `p_expRutasDetalle @accion='INSERT'` — asignación de un pedido a una ruta (tercera vía de cierre).
+* `p_expRutasDetalle @accion='SELECT'` con `idParent=<idRuta>` — resuelve qué pedidos lleva una ruta.
+* `p_expRutas @accion='ENVIAR_FORZAR'` — envío forzado de una ruta.
+* `p_expPasarAlmacenPC @accion='PASAR_ALMACEN_WMS'` — pasar a almacén (expediciones).
+* `p_recepciones @accion='PASAR_ALMACEN'` — pasar a almacén (recepciones; procedimiento distinto
+  de `p_recepcionesAza`, confirmado en vivo sobre REC0000068).
+* `p_wm_recepcionCerrar @estado='CONFIRMAR_CERRAR'` (PDA) — cierre físico de una recepción.
+* `p_wm_recepcion @estado='SELECT_MOVIMIENTO'` con `@valor` no vacío (PDA) — confirmación de una
+  línea de recepción contra su HU/pallet escaneado. El mismo `estado` se repite varias veces por
+  línea como menú intermedio con `valor=''`; solo dispara con `valor` no vacío.
+* `p_recAlbaranHUPreinformado`, `accion=SELECT_INICIO`, `idParent=<idAlbaran>` — HUs/pallets
+  físicos recepcionados de un albarán (equivalente de `p_expPedidoContenedores` para recepciones,
+  forma de datos propia: `numeroSerie`, `ubicacion`, `lote`, `hu`, `piezas`, etc.). Confirmado
+  contra el servidor real (REC0000068): el HU viene como `"000008901 [TAS3009261536]"`.
+* `p_expCabeceraAza`/`p_recCabeceraAza`, `accion=SELECT_INICIO` con `propietario=<código>` (en vez
+  de `idParent=<id>`) — plantilla de datos extra para un pedido/albarán **que todavía no existe**,
+  antes de crearlo, con los valores por defecto según la configuración de ese propietario.
+  Confirmado contra el servidor real. Expuesto en `GET /api/expediciones/datos-extra?propietario=`
+  y `GET /api/recepciones/datos-extra?propietario=`.
+* `p_expRutasDeca`, `accion=SELECT` con `id=<idRuta>` — estado del envío/manifiesto EDI hacia el
+  transportista de una ruta (`shipmentReference`, `estado`, `shipmentStatus`, `documentStatus`,
+  etc.). Confirmado contra el servidor real. **No integrado todavía** (pendiente de decidir si es
+  endpoint propio o parte del watcher). `accion=SELECT_ENVIOS` (con o sin `id`) devuelve 200 con
+  cuerpo vacío en las pruebas realizadas — no confirmado si es una acción soportada o le falta
+  algún parámetro.
+
+Todos estos procedimientos que solo se usan para lectura desde el watcher (no expuestos por ningún
+endpoint de `/api/*`) están en la whitelist igualmente (`src/lux/procedures/whitelist.ts`) para que
+`LuxClient` los acepte cuando el watcher los invoca.

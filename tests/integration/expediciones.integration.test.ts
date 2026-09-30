@@ -259,4 +259,51 @@ describe('Integracion: flujo completo de alta de expedicion', () => {
     const despues = mock.callLog.filter((c) => c.path.startsWith('/proc/')).length;
     expect(despues).toBe(antes);
   });
+
+  it('GET /api/expediciones/datos-extra?propietario=X devuelve la plantilla de datos extra sin necesitar idPedido', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_INICIO' && body.propietario === '00180107') {
+          return { status: 200, body: [{ generarDeca: '', serviceLevel: '', carga: '' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    const response = await httpJson(appUrl, 'GET', '/api/expediciones/datos-extra?propietario=00180107', undefined, authHeaders);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ generarDeca: '', serviceLevel: '', carga: '' });
+  });
+
+  it('GET /api/expediciones/datos-extra sin propietario devuelve 400 sin llegar a llamar a LUX', async () => {
+    const antes = mock.callLog.filter((c) => c.path.startsWith('/proc/')).length;
+
+    const response = await httpJson(appUrl, 'GET', '/api/expediciones/datos-extra', undefined, authHeaders);
+
+    expect(response.status).toBe(400);
+    const despues = mock.callLog.filter((c) => c.path.startsWith('/proc/')).length;
+    expect(despues).toBe(antes);
+  });
+
+  it('"/datos-extra" no se confunde con un idPedido en GET /api/expediciones/:idPedido', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_INICIO') {
+          return { status: 200, body: [{ carga: 'C1' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    const response = await httpJson(appUrl, 'GET', '/api/expediciones/datos-extra?propietario=X', undefined, authHeaders);
+
+    // Si "datos-extra" se hubiera colado como :idPedido, habria intentado un SELECT_ONE con
+    // idPedido="datos-extra" en vez de llamar a la ruta dedicada -- confirmamos que no paso.
+    const llamoSelectOne = mock.callLog.some(
+      (c) => c.path.startsWith('/proc/p_expCabeceraAza') && (c.body as Record<string, unknown>)?.accion === 'SELECT_ONE',
+    );
+    expect(llamoSelectOne).toBe(false);
+    expect(response.status).toBe(200);
+  });
 });

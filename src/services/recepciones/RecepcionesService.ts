@@ -167,6 +167,24 @@ export class RecepcionesService {
     return rows[0] ?? {};
   }
 
+  /**
+   * Plantilla de datos extra para una recepcion QUE TODAVIA NO EXISTE (antes de tener idAlbaran),
+   * filtrada por propietario en vez de por idParent. Devuelve los mismos campos que
+   * `obtenerDatosExtraRecepcion` (apellidos, matRemolque, descarga, matricula, observacionesPDA,
+   * telefono, bultosPrevistos, nombre, dni) pero con valores por defecto (normalmente vacios)
+   * segun la configuracion de ese propietario. Confirmado contra el servidor real de LUX, ver
+   * docs/lux-api-analysis.md §16.
+   */
+  async obtenerDatosExtraRecepcionPorPropietario(propietario: string, almacen?: string): Promise<Record<string, string>> {
+    const rows = await this.luxClient.callProc(
+      'p_recCabeceraAza',
+      'SELECT_INICIO',
+      { propietario },
+      { operacion: 'recepciones.obtenerDatosExtraRecepcionPorPropietario', almacen },
+    );
+    return rows[0] ?? {};
+  }
+
   async obtenerLineasRecepcion(idAlbaran: string, almacen?: string): Promise<RecepcionLinea[]> {
     const rows = await this.luxClient.callProc(
       'p_recAlbaranLineas',

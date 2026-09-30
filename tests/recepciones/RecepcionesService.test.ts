@@ -203,6 +203,18 @@ describe('RecepcionesService', () => {
     expect(extra.matricula).toBe('1234ABC');
   });
 
+  it('obtenerDatosExtraRecepcionPorPropietario usa SELECT_INICIO con propietario (recepcion aun no creada)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        expect(proc).toBe('p_recCabeceraAza');
+        expect(body).toEqual({ accion: 'SELECT_INICIO', propietario: '00180107' });
+        return { status: 200, body: [{ matricula: '', dni: '', bultosPrevistos: '' }] };
+      },
+    });
+    const extra = await service.obtenerDatosExtraRecepcionPorPropietario('00180107');
+    expect(extra).toEqual({ matricula: '', dni: '', bultosPrevistos: '' });
+  });
+
   it('obtenerLineasRecepcion usa SELECT con idParent', async () => {
     mock.updateOptions({
       onProc: (proc, body) => {

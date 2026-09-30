@@ -8,6 +8,7 @@ export function createExpedicionesRouter(service: ExpedicionesService): Router {
 
   router.get('/', controller.listar);
   router.post('/', controller.crear);
+  router.get('/datos-extra', controller.obtenerDatosExtraPorPropietario);
   router.get('/:idPedido', controller.obtenerDetalle);
   router.put('/:idPedido', controller.actualizar);
   router.get('/:idPedido/lineas', controller.obtenerLineas);

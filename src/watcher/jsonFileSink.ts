@@ -27,9 +27,10 @@ function sanitizar(valor: string): string {
  * mapeo de campos hacia ese destino. No sustituye al `WatcherSink` real del paso 3, es un sink mas
  * que se puede quitar/sustituir sin tocar el resto del watcher.
  *
- * Cuando una expedicion llega a un estado final (ver `ESTADOS_FINALES_EXPEDICION`), en vez de
- * guardar un JSON mas se BORRAN todos los que hubiera de ese pedido: ya no va a haber mas cambios,
- * asi que no aporta nada seguir teniendolos por revisar.
+ * Como mucho hay UN fichero por pedido/albaran: antes de guardar el nuevo se borra cualquier JSON
+ * previo del mismo pedido/albaran (confirmado por el usuario: si se duplica, se queda el mas
+ * actual). Cuando una expedicion llega a un estado final (ver `ESTADOS_FINALES_EXPEDICION`) no se
+ * guarda ninguno nuevo: ya no va a haber mas cambios, asi que no aporta nada seguir teniendolo.
  */
 export function createJsonFileSink(dir: string, logger: Logger): WatcherSink {
   let dirListo: Promise<void> | undefined;
@@ -68,7 +69,7 @@ export function createJsonFileSink(dir: string, logger: Logger): WatcherSink {
       return;
     }
     await Promise.all(propios.map((nombre) => rm(join(dir, nombre))));
-    logger.info('Ficheros de eventos del watcher borrados (pedido en estado final, ya no hay mas cambios)', {
+    logger.info('Ficheros de eventos del watcher borrados', {
       operacion: 'watcher.jsonSink.borrado',
       resultado: 'OK',
       cantidad: propios.length,
@@ -79,13 +80,16 @@ export function createJsonFileSink(dir: string, logger: Logger): WatcherSink {
   return {
     onExpedicionActualizada: async (result: ExpedicionActualizada) => {
       const prefijo = `expedicion-${sanitizar(result.pedido)}-`;
+      await borrarFicherosDe(prefijo); // si habia uno anterior de este mismo pedido, se descarta
       if (result.estado && ESTADOS_FINALES_EXPEDICION.has(result.estado)) {
-        await borrarFicherosDe(prefijo);
-        return;
+        return; // estado final: no dejamos ni el ultimo, ya no aporta nada
       }
       await guardar(`${prefijo}${timestampParaNombre()}`, result);
     },
-    onAlbaranActualizado: (result: AlbaranActualizado) =>
-      guardar(`recepcion-${sanitizar(result.albaran)}-${timestampParaNombre()}`, result),
+    onAlbaranActualizado: async (result: AlbaranActualizado) => {
+      const prefijo = `recepcion-${sanitizar(result.albaran)}-`;
+      await borrarFicherosDe(prefijo); // si habia uno anterior de este mismo albaran, se descarta
+      await guardar(`${prefijo}${timestampParaNombre()}`, result);
+    },
   };
 }

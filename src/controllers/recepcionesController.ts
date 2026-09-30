@@ -3,6 +3,7 @@ import type { RecepcionesService } from '../services/recepciones';
 import type { CatalogosService } from '../services/catalogos';
 import { asyncHandler } from './asyncHandler';
 import { resolveAlmacen } from './resolveAlmacen';
+import { LuxValidationError } from '../lux/errors';
 
 /**
  * Todos los endpoints aceptan la cabecera opcional "Almacen" (mismos valores que
@@ -39,6 +40,18 @@ export function createRecepcionesController(service: RecepcionesService, catalog
 
     listar: asyncHandler(async (req: Request, res: Response) => {
       const resultado = await service.listarRecepciones(req.query as Record<string, string>, resolveAlmacen(req));
+      res.status(200).json(resultado);
+    }),
+
+    /** Plantilla de datos extra para una recepcion QUE TODAVIA NO EXISTE, antes de crearla (ver
+     *  docs/lux-api-analysis.md §16). Requiere `?propietario=`. Registrada ANTES de `/:idAlbaran`
+     *  en las rutas para que "datos-extra" no se confunda con un idAlbaran. */
+    obtenerDatosExtraPorPropietario: asyncHandler(async (req: Request, res: Response) => {
+      const propietario = typeof req.query.propietario === 'string' ? req.query.propietario.trim() : '';
+      if (!propietario) {
+        throw new LuxValidationError('Falta el parametro "propietario" en la query string');
+      }
+      const resultado = await service.obtenerDatosExtraRecepcionPorPropietario(propietario, resolveAlmacen(req));
       res.status(200).json(resultado);
     }),
 

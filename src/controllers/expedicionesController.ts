@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import type { ExpedicionesService } from '../services/expediciones';
 import { asyncHandler } from './asyncHandler';
 import { resolveAlmacen } from './resolveAlmacen';
+import { LuxValidationError } from '../lux/errors';
 
 /**
  * Controlador REST propio de AZA sobre ExpedicionesService. No expone /proc como proxy: cada
@@ -41,6 +42,18 @@ export function createExpedicionesController(service: ExpedicionesService) {
 
     listar: asyncHandler(async (req: Request, res: Response) => {
       const resultado = await service.listarExpediciones(req.query as Record<string, string>, resolveAlmacen(req));
+      res.status(200).json(resultado);
+    }),
+
+    /** Plantilla de datos extra para una expedicion QUE TODAVIA NO EXISTE, antes de crearla
+     *  (ver docs/lux-api-analysis.md §16). Requiere `?propietario=`. Registrada ANTES de
+     *  `/:idPedido` en las rutas para que "datos-extra" no se confunda con un idPedido. */
+    obtenerDatosExtraPorPropietario: asyncHandler(async (req: Request, res: Response) => {
+      const propietario = typeof req.query.propietario === 'string' ? req.query.propietario.trim() : '';
+      if (!propietario) {
+        throw new LuxValidationError('Falta el parametro "propietario" en la query string');
+      }
+      const resultado = await service.obtenerDatosExtraExpedicionPorPropietario(propietario, resolveAlmacen(req));
       res.status(200).json(resultado);
     }),
 

@@ -65,7 +65,7 @@ describe('watcher/jsonFileSink', () => {
     expect(contenido).toEqual(result);
   });
 
-  it('dos eventos seguidos del mismo pedido generan dos ficheros distintos (no se sobrescriben)', async () => {
+  it('dos eventos seguidos del mismo pedido dejan solo UN fichero, el mas reciente (se borra el anterior)', async () => {
     dir = mkdtempSync(join(tmpdir(), 'watcher-json-'));
     const sink = createJsonFileSink(dir, createLogger('error'));
 
@@ -83,7 +83,34 @@ describe('watcher/jsonFileSink', () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     await sink.onExpedicionActualizada?.({ ...base, estado: 'ASIGNADO', motivos: ['expedicionPasadaAlmacen'] });
 
-    expect(readdirSync(dir)).toHaveLength(2);
+    const ficheros = readdirSync(dir);
+    expect(ficheros).toHaveLength(1);
+    const contenido = JSON.parse(readFileSync(join(dir, ficheros[0] as string), 'utf-8'));
+    expect(contenido.estado).toBe('ASIGNADO'); // el mas reciente, no el primero
+  });
+
+  it('lo mismo para recepciones: solo queda el JSON mas reciente del mismo albaran', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    const sink = createJsonFileSink(dir, createLogger('error'));
+
+    const base: AlbaranActualizado = {
+      idAlbaran: '7838',
+      albaran: 'REC0000068',
+      propietario: 'FARMALIDER',
+      estado: 'CREACION',
+      motivos: ['recepcionCabeceraActualizada'],
+      lineas: [],
+      hus: [],
+    };
+
+    await sink.onAlbaranActualizado?.(base);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await sink.onAlbaranActualizado?.({ ...base, estado: 'PTE. RECEPCION', motivos: ['recepcionPasadaAlmacen'] });
+
+    const ficheros = readdirSync(dir);
+    expect(ficheros).toHaveLength(1);
+    const contenido = JSON.parse(readFileSync(join(dir, ficheros[0] as string), 'utf-8'));
+    expect(contenido.estado).toBe('PTE. RECEPCION');
   });
 
   it('al llegar a estado ENVIADO, borra todos los JSON previos del pedido y no guarda uno nuevo', async () => {
@@ -103,7 +130,7 @@ describe('watcher/jsonFileSink', () => {
     await sink.onExpedicionActualizada?.(base);
     await new Promise((resolve) => setTimeout(resolve, 5));
     await sink.onExpedicionActualizada?.({ ...base, estado: 'ASIGNADO', motivos: ['expedicionPasadaAlmacen'] });
-    expect(readdirSync(dir)).toHaveLength(2); // confirma que habia algo que borrar
+    expect(readdirSync(dir)).toHaveLength(1); // confirma que habia algo que borrar
 
     await sink.onExpedicionActualizada?.({ ...base, estado: 'ENVIADO', motivos: ['expedicionCerradaOficina'] });
 

@@ -227,6 +227,18 @@ describe('ExpedicionesService', () => {
     expect(extra.carga).toBe('C1');
   });
 
+  it('obtenerDatosExtraExpedicionPorPropietario usa SELECT_INICIO con propietario (expedicion aun no creada)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        expect(proc).toBe('p_expCabeceraAza');
+        expect(body).toEqual({ accion: 'SELECT_INICIO', propietario: '00180107' });
+        return { status: 200, body: [{ generarDeca: '', serviceLevel: '', carga: '' }] };
+      },
+    });
+    const extra = await service.obtenerDatosExtraExpedicionPorPropietario('00180107');
+    expect(extra).toEqual({ generarDeca: '', serviceLevel: '', carga: '' });
+  });
+
   it('obtenerLineasExpedicion usa SELECT con idParent', async () => {
     mock.updateOptions({
       onProc: (proc, body) => {

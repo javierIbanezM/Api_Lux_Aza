@@ -167,6 +167,24 @@ export class ExpedicionesService {
   }
 
   /**
+   * Plantilla de datos extra para una expedicion QUE TODAVIA NO EXISTE (antes de tener idPedido),
+   * filtrada por propietario en vez de por idParent. Devuelve los mismos campos que
+   * `obtenerDatosExtraExpedicion` (generarDeca, expedicion, observacionesAlbaran, fechaEntrega,
+   * facturarTransporte, observacionesAlmacen, serviceLevel, carga) pero con valores por defecto
+   * (normalmente vacios) segun la configuracion de ese propietario. Confirmado contra el servidor
+   * real de LUX, ver docs/lux-api-analysis.md §16.
+   */
+  async obtenerDatosExtraExpedicionPorPropietario(propietario: string, almacen?: string): Promise<Record<string, string>> {
+    const rows = await this.luxClient.callProc(
+      'p_expCabeceraAza',
+      'SELECT_INICIO',
+      { propietario },
+      { operacion: 'expediciones.obtenerDatosExtraExpedicionPorPropietario', almacen },
+    );
+    return rows[0] ?? {};
+  }
+
+  /**
    * Fila completa del visor/listado (p_expedicionesAza, accion=SELECT) para un pedido conocido.
    * Trae columnas que NO devuelve p_expCabeceraAza (transportista, ruta, muelle, prioridad,
    * unidades, fechaCreacion, etc. -- ver docs/lux-api-analysis.md §6.3), utiles para el detalle.

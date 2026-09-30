@@ -196,4 +196,30 @@ describe('Integracion: flujo completo de alta de recepcion', () => {
     expect(response.status).toBe(503);
     expect(response.body.error.type).toBe('LUX_NETWORK_ERROR');
   });
+
+  it('GET /api/recepciones/datos-extra?propietario=X devuelve la plantilla de datos extra sin necesitar idAlbaran', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_INICIO' && body.propietario === '00180107') {
+          return { status: 200, body: [{ matricula: '', dni: '', bultosPrevistos: '' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    const response = await httpJson(appUrl, 'GET', '/api/recepciones/datos-extra?propietario=00180107', undefined, authHeaders);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ matricula: '', dni: '', bultosPrevistos: '' });
+  });
+
+  it('GET /api/recepciones/datos-extra sin propietario devuelve 400 sin llegar a llamar a LUX', async () => {
+    const antes = mock.callLog.filter((c) => c.path.startsWith('/proc/')).length;
+
+    const response = await httpJson(appUrl, 'GET', '/api/recepciones/datos-extra', undefined, authHeaders);
+
+    expect(response.status).toBe(400);
+    const despues = mock.callLog.filter((c) => c.path.startsWith('/proc/')).length;
+    expect(despues).toBe(antes);
+  });
 });
