@@ -40,6 +40,7 @@ describe('watcher/LuxActionWatcher', () => {
     luxMobileLogPath: '',
     pollIntervalMs: 20,
     debounceMs: 30,
+    jsonEventsDir: '', // no usado en estos tests: LuxActionWatcher no conoce jsonFileSink, solo WatcherSink
   };
 
   beforeEach(async () => {
@@ -216,6 +217,31 @@ describe('watcher/LuxActionWatcher', () => {
     expect(evento).toMatchObject({ idPedido: '11115', estado: 'ASIGNADO', motivos: 'expedicionPasadaAlmacen' });
   });
 
+  it('detecta la reapertura forzada de una expedicion (caso real EXP0000076/DIPISTOL)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: '11120', pedido: 'EXP0000076' }] };
+        }
+        if (proc === 'p_expedicionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '11120', pedido: 'EXP0000076', propietario: 'DIPISTOL', estado: 'PENDIENTE' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    await startAndWaitBaseline();
+
+    appendFileSync(
+      luxLogPath,
+      "30-sep-2026 15:26:47 INFO:   [] exec p_expediciones @accion='REABRIR_FORZAR',@almacen='SAGUNTO',@usuario='JIbanezM',@id='11120'\n",
+    );
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.pedidoActualizado'));
+    const evento = logLines.find((l) => l.operacion === 'watcher.pedidoActualizado');
+    expect(evento).toMatchObject({ idPedido: '11120', pedido: 'EXP0000076', estado: 'PENDIENTE', motivos: 'expedicionReabierta' });
+  });
+
   it('detecta la asignacion de un pedido a una ruta (p_expRutasDetalle ACCION=INSERT, caso real EXP0000076)', async () => {
     mock.updateOptions({
       onProc: (proc, body) => {
@@ -364,6 +390,139 @@ describe('watcher/LuxActionWatcher', () => {
     expect(evento).toMatchObject({ idAlbaran: '8000', albaran: 'ALB-99', estado: 'CREACION', motivos: 'recepcionCabeceraActualizada' });
   });
 
+  it('detecta la confirmacion de una linea de recepcion contra su HU, y no con el menu intermedio de valor vacio (caso real REC0000068)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idAlbaran: '7838', albaran: 'REC0000068' }] };
+        }
+        if (proc === 'p_recepcionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '7838', albaran: 'REC0000068', propietario: 'FARMALIDER', estado: 'PTE. RECEPCION' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    await startAndWaitBaseline();
+
+    // Menu intermedio (valor vacio): no debe disparar nada.
+    appendFileSync(
+      mobileLogPath,
+      "30-sep-2026 15:36:08 INFO:   [] exec p_wm_recepcion @estado='SELECT_MOVIMIENTO',@valor='',@almacen='SAGUNTO',@usuario='ARodriguezSP',@valor2='326858',@terminal='94fdca19a3326f42',@identificador='7838'\n",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(logLines.some((l) => l.operacion === 'watcher.albaranActualizado' || l.operacion === 'watcher.sinReferencia')).toBe(false);
+
+    // Confirmacion real (valor = HU escaneada): si debe disparar.
+    appendFileSync(
+      mobileLogPath,
+      "30-sep-2026 15:36:53 INFO:   [] exec p_wm_recepcion @estado='SELECT_MOVIMIENTO',@valor='TAS3009261536',@almacen='SAGUNTO',@usuario='ARodriguezSP',@valor2='326858',@terminal='94fdca19a3326f42',@identificador='7838'\n",
+    );
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.albaranActualizado'));
+    const evento = logLines.find((l) => l.operacion === 'watcher.albaranActualizado');
+    expect(evento).toMatchObject({
+      idAlbaran: '7838',
+      albaran: 'REC0000068',
+      estado: 'PTE. RECEPCION',
+      motivos: 'recepcionLineaConfirmada',
+    });
+  });
+
+  it('incluye las HUs fisicas (p_recAlbaranHUPreinformado) en el resultado, caso real REC0000068', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idAlbaran: '7838', albaran: 'REC0000068' }] };
+        }
+        if (proc === 'p_recepcionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '7838', albaran: 'REC0000068', propietario: 'FARMALIDER', estado: 'RECIBIDO' }] };
+        }
+        if (proc === 'p_recAlbaranHUPreinformado' && body.accion === 'SELECT_INICIO' && body.idParent === '7838') {
+          return {
+            status: 200,
+            body: [{ id: '377114', hu: '000008901 [TAS3009261536]', referencia: '0260200002', piezas: '40.0000', lote: 'SL', estado: 'RECEPCIONADO' }],
+          };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    const onAlbaranActualizado = vi.fn();
+    await startAndWaitBaseline({ onAlbaranActualizado });
+
+    appendFileSync(
+      mobileLogPath,
+      "30-sep-2026 15:36:59 INFO:   [] exec p_wm_recepcionCerrar @estado='CONFIRMAR_CERRAR',@valor='',@almacen='SAGUNTO',@usuario='ARodriguezSP',@valor2='326859',@terminal='94fdca19a3326f42',@identificador='7838'\n",
+    );
+
+    await waitUntil(() => onAlbaranActualizado.mock.calls.length > 0);
+    expect(onAlbaranActualizado.mock.calls[0]?.[0]).toMatchObject({
+      idAlbaran: '7838',
+      hus: [{ id: '377114', hu: '000008901 [TAS3009261536]', referencia: '0260200002', piezas: '40.0000' }],
+    });
+  });
+
+  it('detecta el cierre fisico de una recepcion desde la PDA (caso real REC0000068/FARMALIDER)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idAlbaran: '7838', albaran: 'REC0000068' }] };
+        }
+        if (proc === 'p_recepcionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '7838', albaran: 'REC0000068', propietario: 'FARMALIDER', estado: 'RECIBIDO' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    await startAndWaitBaseline();
+
+    appendFileSync(
+      mobileLogPath,
+      "30-sep-2026 15:36:59 INFO:   [] exec p_wm_recepcionCerrar @estado='CONFIRMAR_CERRAR',@valor='',@almacen='SAGUNTO',@usuario='ARodriguezSP',@valor2='326859',@terminal='94fdca19a3326f42',@identificador='7838'\n",
+    );
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.albaranActualizado'));
+    const evento = logLines.find((l) => l.operacion === 'watcher.albaranActualizado');
+    expect(evento).toMatchObject({
+      idAlbaran: '7838',
+      albaran: 'REC0000068',
+      estado: 'RECIBIDO',
+      motivos: 'recepcionCerradaPicking',
+    });
+  });
+
+  it('detecta "pasar a almacen" de una recepcion (caso real REC0000068/FARMALIDER)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idAlbaran: '7838', albaran: 'REC0000068' }] };
+        }
+        if (proc === 'p_recepcionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '7838', albaran: 'REC0000068', propietario: 'FARMALIDER', estado: 'PTE. RECEPCION' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    await startAndWaitBaseline();
+
+    appendFileSync(
+      luxLogPath,
+      "30-sep-2026 14:29:19 INFO:   [] exec p_recepciones @accion='PASAR_ALMACEN',@almacen='SAGUNTO',@usuario='ARodriguezSP',@id='7838'\n",
+    );
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.albaranActualizado'));
+    const evento = logLines.find((l) => l.operacion === 'watcher.albaranActualizado');
+    expect(evento).toMatchObject({
+      idAlbaran: '7838',
+      albaran: 'REC0000068',
+      estado: 'PTE. RECEPCION',
+      motivos: 'recepcionPasadaAlmacen',
+    });
+  });
+
   it('llama al sink (paso 3, futura persistencia) con el resultado tras un refresco correcto de expedicion', async () => {
     mock.updateOptions({
       onProc: (proc, body) => {
@@ -393,6 +552,7 @@ describe('watcher/LuxActionWatcher', () => {
       estado: 'CERRADO',
       motivos: ['expedicionCerradaOficina'],
       cabecera: { mensaje: 'OK', idPedido: '11115', pedido: 'EXP0000074' },
+      listado: { id: '11115', pedido: 'EXP0000074', propietario: 'AZA LOGISTICS SLU', estado: 'CERRADO' },
       lineas: [],
       contenedores: [],
     });

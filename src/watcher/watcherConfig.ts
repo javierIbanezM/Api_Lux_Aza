@@ -13,6 +13,9 @@ export interface WatcherConfig {
   /** Ventana de espera tras el ultimo evento detectado para un pedido antes de re-consultarlo
    *  (agrupa varias lineas seguidas del mismo pedido en una sola llamada a la API). */
   debounceMs: number;
+  /** Carpeta donde se guarda un JSON por evento (ver src/watcher/jsonFileSink.ts), solucion
+   *  provisional mientras se define el destino definitivo (paso 3, ver watcherSink.ts). */
+  jsonEventsDir: string;
 }
 
 class WatcherConfigError extends Error {
@@ -42,12 +45,18 @@ function optionalInt(name: string, raw: NodeJS.ProcessEnv, defaultValue: number)
   return parsed;
 }
 
+function optionalString(name: string, raw: NodeJS.ProcessEnv, defaultValue: string): string {
+  const value = raw[name];
+  return value === undefined || value.trim() === '' ? defaultValue : value;
+}
+
 export function loadWatcherConfig(raw: NodeJS.ProcessEnv = process.env): WatcherConfig {
   return {
     luxLogPath: requireString('LUX_LOG_PATH', raw),
     luxMobileLogPath: requireString('LUX_MOBILE_LOG_PATH', raw),
     pollIntervalMs: optionalInt('WATCHER_POLL_MS', raw, 3000),
     debounceMs: optionalInt('WATCHER_DEBOUNCE_MS', raw, 5000),
+    jsonEventsDir: optionalString('WATCHER_JSON_DIR', raw, 'data/watcher-events'),
   };
 }
 

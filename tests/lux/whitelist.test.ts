@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { assertValidProcedureName, isWhitelistedProcedure, PROCEDURE_WHITELIST } from '../../src/lux/procedures';
 
 describe('whitelist de procedimientos', () => {
-  it('contiene exactamente los 8 procedimientos autorizados', () => {
+  it('contiene exactamente los 9 procedimientos autorizados', () => {
     expect([...PROCEDURE_WHITELIST].sort()).toEqual(
       [
         'p_expCabeceraAza',
@@ -13,8 +13,13 @@ describe('whitelist de procedimientos', () => {
         'p_recCabeceraAza',
         'p_recAlbaranLineas',
         'p_recepcionesAza',
+        'p_recAlbaranHUPreinformado',
       ].sort(),
     );
+  });
+
+  it('acepta p_recAlbaranHUPreinformado (confirmado contra el servidor real, equivalente de contenedores para recepciones)', () => {
+    expect(isWhitelistedProcedure('p_recAlbaranHUPreinformado')).toBe(true);
   });
 
   it('acepta un procedimiento valido', () => {

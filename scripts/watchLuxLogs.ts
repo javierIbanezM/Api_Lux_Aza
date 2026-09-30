@@ -18,6 +18,7 @@ import { loadWatcherConfig } from '../src/watcher/watcherConfig';
 import { createLogger } from '../src/logging';
 import { buildDependencies } from '../src/app';
 import { LuxActionWatcher } from '../src/watcher/luxActionWatcher';
+import { createJsonFileSink } from '../src/watcher/jsonFileSink';
 
 function bootstrap(): void {
   const logger = createLogger((process.env.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error') ?? 'info');
@@ -35,16 +36,20 @@ function bootstrap(): void {
   }
 
   const deps = buildDependencies(config, logger);
-  // Paso 3 del flujo (evento detectado -> llamada API -> persistir en destino AZA): pendiente de
-  // que AZA facilite la base de datos/sistema destino (ver src/watcher/watcherSink.ts). Cuando
-  // este disponible, se implementa un WatcherSink y se pasa aqui como 6º argumento; sin el, el
-  // watcher sigue funcionando igual que hasta ahora (solo registra en el log).
+  // Paso 3 del flujo (evento detectado -> llamada API completa -> persistir en destino AZA):
+  // mientras no se defina el destino definitivo (base de datos u otro sistema, ver
+  // src/watcher/watcherSink.ts), se usa un sink provisional que guarda cada evento como un JSON
+  // individual en disco (ver src/watcher/jsonFileSink.ts), para poder revisar exactamente que
+  // datos llegan antes de decidir el mapeo de campos. Carpeta configurable via WATCHER_JSON_DIR
+  // (por defecto "data/watcher-events").
+  const sink = createJsonFileSink(watcherConfig.jsonEventsDir, logger);
   const watcher = new LuxActionWatcher(
     watcherConfig,
     deps.luxClient,
     deps.expedicionesService,
     deps.recepcionesService,
     logger,
+    sink,
   );
 
   watcher.start();

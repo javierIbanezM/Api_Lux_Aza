@@ -162,31 +162,64 @@ vigila los logs propios de LUX (no la API — el fichero de log del servidor Jav
 red) para detectar cuando cambia el estado de un pedido, sin tener que hacer polling constante a
 la API.
 
-* Vigila 9 tipos de acción (ver `docs/lux-api-analysis.md` §16 y `docs/progress.md` fases 24-26),
+* Vigila 14 tipos de acción (ver `docs/lux-api-analysis.md` §16 y `docs/progress.md` fases 24-28),
   tanto de expediciones como de recepciones:
   * Alta/edición de cabecera (`p_expCabeceraAza`/`p_recCabeceraAza @accion='ACTUALIZAR'`, del PDF)
     — dirección, transportista, service level, etc. Un alta (id `'0'`) se resuelve por el texto
     del pedido/albarán, ya que LUX aún no ha asignado el id real en ese momento.
   * Alta/edición de línea (`p_expPedidoLineas`/`p_recAlbaranLineas`, del PDF).
-  * Cierre de picking con/sin discrepancias (`p_wm_expSinConsolidar @estado='CERRAR'`, no
-    documentado, confirmado en vivo).
+  * Cierre de picking con/sin discrepancias, expedición (`p_wm_expSinConsolidar @estado='CERRAR'`,
+    no documentado, confirmado en vivo).
+  * Cierre físico de recepción desde la PDA (`p_wm_recepcionCerrar @estado='CONFIRMAR_CERRAR'`, no
+    documentado, confirmado en vivo sobre REC0000068).
+  * Confirmación de línea de recepción contra su HU/pallet (`p_wm_recepcion
+    @estado='SELECT_MOVIMIENTO'` **con `@valor` no vacío** — el mismo estado se repite como menú
+    intermedio con `valor=''` varias veces por línea; solo la última vez, con la HU ya escaneada,
+    es la confirmación real). No documentado, confirmado en vivo sobre REC0000068.
   * Cierre de oficina (`p_expediciones @accion='CERRAR_OFICINA_FIN_FORZAR'`, no documentado).
   * **Cierre por asignación a ruta** (`p_expRutasDetalle @accion='INSERT'`, no documentado) —
     tercera vía de cierre distinta a las dos anteriores, confirmada con un caso real.
-  * Pasar a almacén (`p_expPasarAlmacenPC @accion='PASAR_ALMACEN_WMS'`, no documentado).
+  * Reapertura forzada de expedición (`p_expediciones @accion='REABRIR_FORZAR'`, no documentado,
+    confirmado en vivo sobre EXP0000076).
+  * Anulación forzada de expedición (`p_expediciones @accion='ANULAR_FIN_FORZAR'`, no documentado).
+  * Pasar a almacén, expedición (`p_expPasarAlmacenPC @accion='PASAR_ALMACEN_WMS'`, no documentado).
+  * Pasar a almacén, recepción (`p_recepciones @accion='PASAR_ALMACEN'`, no documentado,
+    confirmado en vivo sobre REC0000068 — procedimiento distinto de `p_recepcionesAza`).
   * Envío de ruta (`p_expRutas @accion='ENVIAR_FORZAR'`, no documentado), resuelto a los pedidos
     de esa ruta vía `p_expRutasDetalle` (tampoco documentado).
   * **Importante**: el mismo procedimiento puede loguearse con el parámetro de acción en
     minúsculas y justo después del nombre (llamadas de nuestra propia API) o en **mayúsculas y en
     cualquier posición** de la línea (llamadas desde la UI de LUX/PDA). El motor de patrones lo
     detecta en ambos casos — esto fue un bug real corregido en la fase 26, no una teoría.
-* Al detectar una, re-consulta el pedido/albarán afectado contra LUX (reutilizando
-  `ExpedicionesService`/`RecepcionesService` directamente, sin pasar por `/api/*`) y registra el
-  resultado en su propio log estructurado (`watcher.pedidoActualizado` /
-  `watcher.albaranActualizado`). Si una línea no trae ninguna referencia resoluble a un
-  pedido/albarán (p. ej. un `UPDATE` de línea que solo lleva el id de la propia línea), se
-  registra un aviso (`watcher.sinReferencia`) en vez de ignorarlo en silencio. Por ahora **no**
-  escribe en ninguna base de datos — es la base para conectar algo después.
+* Al detectar una, hace la **re-consulta completa** del pedido/albarán afectado contra LUX
+  (reutilizando `ExpedicionesService`/`RecepcionesService` directamente, sin pasar por `/api/*`):
+  para expediciones, cabecera (`p_expCabeceraAza`) + **listado** (`p_expedicionesAza`, fila
+  completa — trae columnas que NO están en la cabecera: transportista, ruta, muelle, prioridad,
+  deliveryNumber, fechaCerrado, unidades, pallets, numContenedores, serviceLevel/nivelServicio,
+  etc.) + líneas (`p_expPedidoLineas`) + contenedores (`p_expPedidoContenedores`); para
+  recepciones, cabecera (`p_recCabeceraAza`) + listado (`p_recepcionesAza`) + líneas
+  (`p_recAlbaranLineas`) + HUs/pallets físicos (`p_recAlbaranHUPreinformado` — equivalente de
+  "contenedores" para recepciones, forma de datos propia). Todas las llamadas se hacen siempre, sin importar cuál fue el motivo
+  concreto que disparó el refresco (cabecera, línea, pasar a almacén...). Líneas y contenedores son
+  "best effort": si esa llamada en concreto falla, se registra un aviso (`watcher.datoIncompleto`)
+  sin abortar el resto. Registra el resultado en su propio log estructurado
+  (`watcher.pedidoActualizado` / `watcher.albaranActualizado`, con `lineasCount`/`contenedoresCount`).
+  Si una línea no trae ninguna referencia resoluble a un pedido/albarán (p. ej. un `UPDATE` de línea
+  que solo lleva el id de la propia línea), se registra un aviso (`watcher.sinReferencia`) en vez de
+  ignorarlo en silencio.
+* Tras cada re-consulta completa correcta, llama a un `WatcherSink` (`src/watcher/watcherSink.ts`)
+  con el resultado completo (cabecera, líneas, contenedores, propietario, estado, motivos). Es el
+  punto de enganche para el paso 3 (persistir en un destino de AZA — base de datos u otro sistema).
+  **Hoy no escribe en ninguna base de datos** (pendiente de que se indique el destino y el mapeo de
+  campos); mientras tanto, `npm run watch-logs` usa un sink provisional
+  (`src/watcher/jsonFileSink.ts`) que guarda **un fichero JSON por evento** con toda la información,
+  en la carpeta `WATCHER_JSON_DIR` (por defecto `data/watcher-events/`, ya en `.gitignore`) — sirve
+  para revisar exactamente qué datos llegan antes de decidir el mapeo. Ver ejemplos de la forma de
+  ese JSON en `docs/examples/watcher-sink-expedicion.example.json` y
+  `watcher-sink-recepcion.example.json`. Cuando una expedición llega a `estado='ENVIADO'` (estado
+  final, ya no hay más cambios), en vez de guardar un JSON más se **borran todos los que hubiera de
+  ese pedido** — no aportan nada a partir de ahí. Un sink que falla no afecta al refresco ya
+  registrado (se loguea aparte como `watcher.sinkError`).
 * Variables propias (ver `.env.example`): `LUX_LOG_PATH`, `LUX_MOBILE_LOG_PATH` (rutas a los
   ficheros de log activos), `WATCHER_POLL_MS` (sondeo, por defecto 3 s),
   `WATCHER_DEBOUNCE_MS` (agrupa varias líneas seguidas del mismo pedido en una sola re-consulta,
@@ -236,7 +269,7 @@ de integración end-to-end (`tests/integration`) contra un **mock HTTP completo 
 
 ## Reglas no negociables aplicadas
 
-* Whitelist de 7 procedimientos autorizados (`src/lux/procedures/whitelist.ts`); cualquier otro
+* Whitelist de 9 procedimientos autorizados (`src/lux/procedures/whitelist.ts`); cualquier otro
   nombre se rechaza localmente antes de llamar a LUX.
 * `usuario` y `almacen` nunca se envían en el body de `/proc` (se filtran defensivamente en
   `LuxClient.callProc` aunque un llamador los incluya por error).

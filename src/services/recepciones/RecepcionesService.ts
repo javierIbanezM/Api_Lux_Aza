@@ -3,6 +3,7 @@ import { buildProcBody } from '../../lux/utils';
 import { LuxError, LuxValidationError } from '../../lux/errors';
 import type {
   Recepcion,
+  RecepcionHU,
   RecepcionLinea,
   RecepcionListFilters,
   RecepcionListItem,
@@ -193,6 +194,21 @@ export class RecepcionesService {
       { operacion: 'recepciones.obtenerResumenListadoRecepcion', almacen },
     );
     return rows[0] as RecepcionListItem | undefined;
+  }
+
+  /**
+   * HUs/pallets fisicos recepcionados de un albaran (p_recAlbaranHUPreinformado,
+   * accion=SELECT_INICIO). Procedimiento no documentado en la guia del proveedor; confirmado
+   * contra el servidor real de LUX, ver docs/lux-api-analysis.md §16. Solo lectura.
+   */
+  async obtenerHUsRecepcion(idAlbaran: string, almacen?: string): Promise<RecepcionHU[]> {
+    const rows = await this.luxClient.callProc(
+      'p_recAlbaranHUPreinformado',
+      'SELECT_INICIO',
+      { idParent: idAlbaran },
+      { operacion: 'recepciones.obtenerHUsRecepcion', almacen },
+    );
+    return rows as RecepcionHU[];
   }
 
   private describeError(err: unknown): string {

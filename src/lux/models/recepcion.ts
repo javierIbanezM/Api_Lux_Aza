@@ -88,3 +88,27 @@ export interface RecepcionLinea extends Record<string, string> {
   mensaje: string;
   id: string;
 }
+
+/**
+ * Fila devuelta por p_recAlbaranHUPreinformado (accion=SELECT_INICIO, idParent=idAlbaran).
+ * Equivalente de ExpedicionContenedor pero para recepciones (detalle por HU/pallet fisico
+ * recepcionado, no por linea de albaran). Procedimiento NO documentado en la guia del proveedor:
+ * campos confirmados de forma empirica contra el servidor real de LUX (SAGUNTO) el 2026-09-30,
+ * ver docs/lux-api-analysis.md §16. Solo lectura.
+ */
+export interface RecepcionHU extends Record<string, string> {
+  id: string;
+  hu: string;
+  referencia: string;
+  piezas: string;
+  lote: string;
+  fechaCaducidad: string;
+  estado: string;
+  ubicacion: string;
+  almacenHU: string;
+  numeroSerie: string;
+  bloqueo: string;
+  volumenRecepcion: string;
+  pesoRecepcion: string;
+  observaciones: string;
+}

@@ -1,5 +1,14 @@
 import type { ActionEventType } from './actionPatterns';
-import type { Expedicion, ExpedicionContenedor, ExpedicionLinea, Recepcion, RecepcionLinea } from '../lux/models';
+import type {
+  Expedicion,
+  ExpedicionContenedor,
+  ExpedicionLinea,
+  ExpedicionListItem,
+  Recepcion,
+  RecepcionHU,
+  RecepcionLinea,
+  RecepcionListItem,
+} from '../lux/models';
 
 export interface ExpedicionActualizada {
   idPedido?: string;
@@ -9,6 +18,12 @@ export interface ExpedicionActualizada {
   motivos: ActionEventType[];
   /** Cabecera completa (p_expCabeceraAza), si se pudo obtener. */
   cabecera?: Expedicion;
+  /** Fila completa del listado (p_expedicionesAza, accion=SELECT). Trae columnas que NO estan en
+   *  `cabecera` (transportista, ruta, muelle, prioridad, deliveryNumber, fechaCerrado, unidades,
+   *  pallets, numContenedores, serviceLevel/nivelServicio, etc. -- ver
+   *  docs/lux-api-analysis.md §6.3). `propietario`/`estado` de arriba vienen de aqui, pero esta
+   *  fila trae mucho mas que esos dos campos. */
+  listado?: ExpedicionListItem;
   /** Lineas del pedido (p_expPedidoLineas, accion=SELECT). */
   lineas: ExpedicionLinea[];
   /** Contenedores/bultos del pedido (p_expPedidoContenedores, accion=SELECT_INICIO). */
@@ -23,8 +38,15 @@ export interface AlbaranActualizado {
   motivos: ActionEventType[];
   /** Cabecera completa (p_recCabeceraAza), si se pudo obtener. */
   cabecera?: Recepcion;
+  /** Fila completa del listado (p_recepcionesAza, accion=SELECT). Igual que en expediciones,
+   *  trae columnas que no estan en `cabecera`; `propietario`/`estado` de arriba salen de aqui. */
+  listado?: RecepcionListItem;
   /** Lineas del albaran (p_recAlbaranLineas, accion=SELECT). */
   lineas: RecepcionLinea[];
+  /** HUs/pallets fisicos recepcionados (p_recAlbaranHUPreinformado, accion=SELECT_INICIO).
+   *  Equivalente de "contenedores" en expediciones; aqui es donde aparece el codigo de HU
+   *  escaneado en la PDA (ver `recepcionLineaConfirmada`/`recepcionCerradaPicking`). */
+  hus: RecepcionHU[];
 }
 
 /**

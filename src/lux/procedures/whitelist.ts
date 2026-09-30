@@ -12,6 +12,11 @@
  * resuelve que pedidos lleva una ruta de transporte (accion=SELECT, idParent=<idRuta>). Confirmado
  * contra el log real de LUX, ver docs/lux-api-analysis.md §16. Solo lectura, no expuesto por
  * ningun endpoint de /api/*.
+ *
+ * `p_recAlbaranHUPreinformado` es el equivalente de `p_expPedidoContenedores` pero para
+ * recepciones (detalle por HU/pallet fisico, no por linea de albaran): confirmado contra el
+ * servidor real (accion=SELECT_INICIO, idParent=<idAlbaran>), forma de datos propia (numeroSerie,
+ * ubicacion, lote, hu, piezas, etc.), distinta de `p_expPedidoContenedores`. Solo lectura.
  */
 export const PROCEDURE_WHITELIST = [
   'p_expCabeceraAza',
@@ -22,6 +27,7 @@ export const PROCEDURE_WHITELIST = [
   'p_recCabeceraAza',
   'p_recAlbaranLineas',
   'p_recepcionesAza',
+  'p_recAlbaranHUPreinformado',
 ] as const;
 
 export type WhitelistedProcedure = (typeof PROCEDURE_WHITELIST)[number];

@@ -18,12 +18,17 @@
 export type ActionEventType =
   | 'expedicionCerradaPicking'
   | 'expedicionCerradaOficina'
+  | 'expedicionReabierta'
+  | 'expedicionAnulada'
   | 'expedicionAsignadaARuta'
   | 'expedicionPasadaAlmacen'
   | 'expedicionCabeceraActualizada'
   | 'expedicionLineaModificada'
   | 'recepcionCabeceraActualizada'
   | 'recepcionLineaModificada'
+  | 'recepcionPasadaAlmacen'
+  | 'recepcionCerradaPicking'
+  | 'recepcionLineaConfirmada'
   | 'rutaEnviada';
 
 export interface DetectedEvent {
@@ -66,6 +71,12 @@ interface Rule {
   actionParam: string;
   /** Valor(es) exactos que debe tener `actionParam` para que la regla dispare. */
   actionValues: string[];
+  /** Filtro adicional opcional sobre OTRO parametro de la linea, evaluado solo si procedimiento +
+   *  actionParam ya coincidieron. Hace falta cuando el mismo valor de `actionParam` se reutiliza
+   *  para dos cosas distintas y solo se distinguen por otro campo (ver `recepcionLineaConfirmada`:
+   *  el mismo `estado='SELECT_MOVIMIENTO'` es un menu intermedio con `valor=''` la mayoria de
+   *  veces, y la confirmacion real solo la ultima vez, con `valor=<HU>` no vacio). */
+  extra?: (line: string) => boolean;
   build: (line: string) => DetectedEvent | null;
 }
 
@@ -81,6 +92,21 @@ const RULES: Rule[] = [
     },
   },
   {
+    type: 'recepcionCerradaPicking',
+    // Equivalente de "cierre de picking" (expedicionCerradaPicking) pero para recepciones:
+    // cierre fisico de la recepcion desde la PDA. Confirmado en vivo (30-sep-2026 15:36:59,
+    // REC0000068, identificador='7838'). CONFIRMAR_CERRAR es el disparo real; PEDIR_ALB_PROVEEDOR
+    // y PARAMETRO que vienen justo despues son pasos posteriores de captura de datos (num. de
+    // albaran del proveedor, etc.), no el cierre en si.
+    procedure: 'p_wm_recepcionCerrar',
+    actionParam: 'estado',
+    actionValues: ['CONFIRMAR_CERRAR'],
+    build: (line) => {
+      const idAlbaran = extractParam(line, 'identificador');
+      return idAlbaran ? { type: 'recepcionCerradaPicking', idAlbaran, rawLine: line } : null;
+    },
+  },
+  {
     type: 'expedicionCerradaOficina',
     procedure: 'p_expediciones',
     actionParam: 'accion',
@@ -88,6 +114,30 @@ const RULES: Rule[] = [
     build: (line) => {
       const idPedido = extractParam(line, 'id');
       return idPedido ? { type: 'expedicionCerradaOficina', idPedido, rawLine: line } : null;
+    },
+  },
+  {
+    type: 'expedicionReabierta',
+    // Confirmado en vivo (30-sep-2026 15:26:47, EXP0000076/DIPISTOL, id='11120'): reabre un pedido
+    // ya cerrado. No documentado en el PDF.
+    procedure: 'p_expediciones',
+    actionParam: 'accion',
+    actionValues: ['REABRIR_FORZAR'],
+    build: (line) => {
+      const idPedido = extractParam(line, 'id');
+      return idPedido ? { type: 'expedicionReabierta', idPedido, rawLine: line } : null;
+    },
+  },
+  {
+    type: 'expedicionAnulada',
+    // Confirmado por observacion directa del log (no documentado en el PDF). Misma forma que
+    // CERRAR_OFICINA_FIN_FORZAR/REABRIR_FORZAR, solo cambia el valor de @accion.
+    procedure: 'p_expediciones',
+    actionParam: 'accion',
+    actionValues: ['ANULAR_FIN_FORZAR'],
+    build: (line) => {
+      const idPedido = extractParam(line, 'id');
+      return idPedido ? { type: 'expedicionAnulada', idPedido, rawLine: line } : null;
     },
   },
   {
@@ -173,6 +223,37 @@ const RULES: Rule[] = [
       return { type: 'recepcionLineaModificada', idAlbaran, albaran, rawLine: line };
     },
   },
+  {
+    type: 'recepcionLineaConfirmada',
+    // p_wm_recepcion @estado='SELECT_MOVIMIENTO' se repite varias veces por linea (menu intermedio
+    // tras cada dato suelto: referencia, lote, caducidad, cantidad), siempre con @valor='' vacio.
+    // SOLO la ultima vez, justo tras escanear la HU/pallet destino, trae @valor=<HU> no vacio --
+    // esa es la confirmacion real de que la linea quedo recibida contra esa HU. Confirmado en vivo
+    // (30-sep-2026 15:36:53, REC0000068, identificador='7838', valor='TAS3009261536'). No
+    // documentado en el PDF.
+    procedure: 'p_wm_recepcion',
+    actionParam: 'estado',
+    actionValues: ['SELECT_MOVIMIENTO'],
+    extra: (line) => extractParam(line, 'valor') !== undefined,
+    build: (line) => {
+      const idAlbaran = extractParam(line, 'identificador');
+      return idAlbaran ? { type: 'recepcionLineaConfirmada', idAlbaran, rawLine: line } : null;
+    },
+  },
+  {
+    type: 'recepcionPasadaAlmacen',
+    // Equivalente de "pasar a almacen" para recepciones, via el procedimiento `p_recepciones`
+    // (sin "Aza", analogo a `p_expediciones`/`p_expPasarAlmacenPC` de expediciones). Confirmado
+    // en vivo (30-sep-2026 14:29:19, REC0000068/FARMALIDER, id='7838'). Exactamente PASAR_ALMACEN,
+    // no la variante de eco PASAR_ALMACEN_FIN.
+    procedure: 'p_recepciones',
+    actionParam: 'accion',
+    actionValues: ['PASAR_ALMACEN'],
+    build: (line) => {
+      const idAlbaran = extractParam(line, 'id');
+      return idAlbaran ? { type: 'recepcionPasadaAlmacen', idAlbaran, rawLine: line } : null;
+    },
+  },
 ];
 
 /** Analiza una linea de log y devuelve el evento detectado, o `null` si no coincide con ninguno. */
@@ -183,6 +264,9 @@ export function matchActionLine(line: string): DetectedEvent | null {
     }
     const value = extractParam(line, rule.actionParam);
     if (value === undefined || !rule.actionValues.includes(value)) {
+      continue;
+    }
+    if (rule.extra && !rule.extra(line)) {
       continue;
     }
     return rule.build(line);

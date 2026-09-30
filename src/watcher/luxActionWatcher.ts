@@ -2,7 +2,7 @@ import type { Logger } from '../logging';
 import type { ExpedicionesService } from '../services/expediciones';
 import type { RecepcionesService } from '../services/recepciones';
 import type { LuxClient } from '../lux/client';
-import type { Expedicion, ExpedicionContenedor, ExpedicionLinea, Recepcion, RecepcionLinea } from '../lux/models';
+import type { Expedicion, ExpedicionContenedor, ExpedicionLinea, Recepcion, RecepcionHU, RecepcionLinea } from '../lux/models';
 import { LogTailer } from './logTailer';
 import { matchActionLine, type ActionEventType, type DetectedEvent } from './actionPatterns';
 import { resolverPedidosDeRuta } from './routeResolver';
@@ -243,6 +243,7 @@ export class LuxActionWatcher {
           propietario: result.propietario,
           estado: result.estado,
           lineasCount: result.lineas.length,
+          husCount: result.hus.length,
           motivos,
           duracionMs: Date.now() - startedAt,
         });
@@ -333,14 +334,15 @@ export class LuxActionWatcher {
       propietario: resumen?.propietario,
       estado: resumen?.estado,
       cabecera,
+      listado: resumen,
       lineas,
       contenedores,
     };
   }
 
   /** Re-consulta "completa" de una recepcion: cabecera (p_recCabeceraAza) + lineas
-   *  (p_recAlbaranLineas), no solo el resumen del listado (no existe equivalente de
-   *  "contenedores" documentado/confirmado para recepciones). */
+   *  (p_recAlbaranLineas) + HUs/pallets fisicos (p_recAlbaranHUPreinformado) -- equivalente de
+   *  "contenedores" en expediciones, con forma de datos propia. */
   private async refreshRecepcion(
     target: Extract<PendingTarget, { domain: 'recepcion' }>,
   ): Promise<Omit<AlbaranActualizado, 'motivos'>> {
@@ -360,11 +362,13 @@ export class LuxActionWatcher {
     const idAlbaran = idAlbaranDirecto ?? resumen?.id;
 
     let lineas: RecepcionLinea[] = [];
+    let hus: RecepcionHU[] = [];
     if (idAlbaran) {
       if (!cabecera) {
         cabecera = await this.fetchBestEffort(() => this.recepcionesService.obtenerRecepcion(idAlbaran), 'cabecera');
       }
       lineas = (await this.fetchBestEffort(() => this.recepcionesService.obtenerLineasRecepcion(idAlbaran), 'lineas')) ?? [];
+      hus = (await this.fetchBestEffort(() => this.recepcionesService.obtenerHUsRecepcion(idAlbaran), 'hus')) ?? [];
     }
 
     return {
@@ -373,7 +377,9 @@ export class LuxActionWatcher {
       propietario: resumen?.propietario,
       estado: resumen?.estado,
       cabecera,
+      listado: resumen,
       lineas,
+      hus,
     };
   }
 }
