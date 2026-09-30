@@ -17,9 +17,15 @@ npm run dev
 ```
 
 El `.env` se carga automaticamente (via `dotenv`) al arrancar — no hace falta exportar las
-variables a mano en la terminal (PowerShell, CMD, bash...). Si cambias algo en `.env`, para y
-vuelve a arrancar el proceso: los cambios de codigo se recargan solos (`tsx watch`), pero las
-variables de entorno solo se releen al arrancar.
+variables a mano en la terminal (PowerShell, CMD, bash...).
+
+En **desarrollo** (`npm run dev`), `tsx watch --watch-path .env` vigila tambien el propio `.env`
+ademas del codigo: si cambias cualquier variable, el proceso se reinicia solo (veras
+`Restarting 'src/server.ts'` en la consola), igual que ya hacia con los cambios de codigo.
+
+En **produccion** (`npm start`, que ejecuta `node dist/src/server.js` ya compilado, sin `tsx
+watch`) esto no aplica: si cambias `.env` ahi, hay que parar y volver a arrancar el proceso a
+mano (o dejar que el orquestador — PM2, systemd, Docker, etc. — lo reinicie).
 
 El servidor queda escuchando en `http://localhost:3000` (o el `PORT` configurado):
 

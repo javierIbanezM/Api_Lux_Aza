@@ -25,6 +25,25 @@
 | 20 — Tablas de Líneas completas en `/almacen` | COMPLETADO | Columnas dinámicas (34 campos reales en expediciones, 30 en recepciones) en vez de 5 fijas; excluye solo flags `action#*` de la UI de Whales. Ver sección siguiente. |
 | 21 — Corrección de host/credenciales LUX mal configurados | COMPLETADO | `.env` apuntaba a un entorno LUX distinto (`.140`) con datos muy diferentes; corregido a `.145` + `interfaz`. Ver sección siguiente. |
 | 22 — Carga automática de `.env` (`dotenv`) | COMPLETADO | La app no leía `.env` por sí sola; había que exportarlo a mano en la terminal antes de `npm run dev`/`npm start`. Ver sección siguiente. |
+| 23 — Reinicio automático en desarrollo al cambiar `.env` | COMPLETADO | `tsx watch --watch-path .env` en `npm run dev`; evita el problema (repetido 2 veces en esta sesión) de un proceso corriendo con config antigua de `.env`. Ver sección siguiente. |
+
+## Fase 23 — Auto-reinicio al cambiar `.env` en desarrollo (2026-09-30)
+
+Durante la sesión de análisis de logs de LUX, el mismo problema de "proceso corriendo con una
+variable de `.env` desactualizada" (ya visto en la fase 21 con `LUX_BASE_URL`) volvió a aparecer,
+esta vez con `LUX_WAREHOUSE`, dando datos de un pedido completamente distinto al esperado durante
+unos minutos hasta reiniciar a mano.
+
+Solución: `package.json` → `"dev": "tsx watch --watch-path .env src/server.ts"`. `tsx watch` ya
+vigilaba los ficheros `.ts` importados; `--watch-path .env` (flag propio de Node `--watch`, que
+`tsx watch` soporta al construirse sobre él) añade `.env` a la vigilancia aunque no sea un módulo
+importado. Verificado con una prueba real: modificar `.env` mientras `npm run dev` está
+corriendo produce `Restarting 'src/server.ts'` en la consola y un reinicio limpio, sin
+intervención manual.
+
+**Solo aplica a `npm run dev`** (que usa `tsx watch`). `npm start` (producción, JS ya compilado
+con `node dist/src/server.js`) sigue sin recargar `.env` solo — ahí hay que reiniciar el proceso
+a mano o dejar que el orquestador (PM2/systemd/Docker) lo haga. Documentado en `README.md`.
 
 ## Fase 22 — Carga automática de `.env` (2026-09-30)
 
