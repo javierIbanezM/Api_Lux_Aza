@@ -8,8 +8,13 @@ import type { AlbaranActualizado, ExpedicionActualizada, WatcherSink } from './w
  *  cambios y ya no sirve"). */
 const ESTADOS_FINALES_EXPEDICION = new Set(['ENVIADO']);
 
+/** Timestamp para el nombre de fichero en hora LOCAL (no UTC): `toISOString()` da UTC, que en
+ *  Espana (CEST, UTC+2 en verano) va 2h por detras del reloj de pared -- confuso al revisar los
+ *  ficheros a simple vista. Sin sufijo "Z" a proposito, para no dar a entender que es UTC. */
 function timestampParaNombre(): string {
-  return new Date().toISOString().replace(/[:.]/g, '-');
+  const d = new Date();
+  const pad = (n: number, len = 2): string => String(n).padStart(len, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}-${pad(d.getMilliseconds(), 3)}`;
 }
 
 /** Evita que un pedido/albaran con caracteres raros rompa el nombre de fichero. */
