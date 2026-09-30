@@ -26,8 +26,151 @@
 | 21 — Corrección de host/credenciales LUX mal configurados | COMPLETADO | `.env` apuntaba a un entorno LUX distinto (`.140`) con datos muy diferentes; corregido a `.145` + `interfaz`. Ver sección siguiente. |
 | 22 — Carga automática de `.env` (`dotenv`) | COMPLETADO | La app no leía `.env` por sí sola; había que exportarlo a mano en la terminal antes de `npm run dev`/`npm start`. Ver sección siguiente. |
 | 23 — Reinicio automático en desarrollo al cambiar `.env` | COMPLETADO | `tsx watch --watch-path .env` en `npm run dev`; evita el problema (repetido 2 veces en esta sesión) de un proceso corriendo con config antigua de `.env`. Ver sección siguiente. |
+| 24 — Watcher de logs LUX (near-real-time) | COMPLETADO | `src/watcher/`, `scripts/watchLuxLogs.ts` (`npm run watch-logs`). Detecta 3 acciones de negocio en los logs reales de LUX y re-consulta el pedido afectado. Ver sección siguiente. |
+| 25 — Watcher ampliado (altas/ediciones de cabecera y línea, recepciones, pasar a almacén) | COMPLETADO | `src/watcher/luxActionWatcher.ts` (renombrado, ahora cubre expediciones y recepciones); 8 tipos de evento en total. Ver sección siguiente. |
+| 26 — Tercera vía de cierre (`p_expRutasDetalle` INSERT) + corrección de bug de mayúsculas/orden | COMPLETADO | Nueva señal `expedicionAsignadaARuta`; reescrito el motor de patrones para no depender de mayúsculas ni orden de parámetros (bug real que hacía fallar varios patrones cuando la acción la hacía la UI de LUX en vez de nuestra API). Ver sección siguiente. |
 
-## Fase 23 — Auto-reinicio al cambiar `.env` en desarrollo (2026-09-30)
+## Fase 26 — Tercera vía de cierre y corrección de un bug real de mayúsculas/orden (2026-09-30)
+
+Analizando el pedido real `EXP0000076` (propietario `DIPISTOL`, id `11120`, cerrado el
+28-sep-2026 15:43:22) a petición del usuario, aparecieron dos hallazgos importantes:
+
+**1. Tercera vía de cierre confirmada**: además de `p_wm_expSinConsolidar`/`CERRAR` y
+`p_expediciones`/`CERRAR_OFICINA_FIN_FORZAR`, un pedido también puede cerrarse asignándolo a una
+ruta desde la oficina, lo que inserta una fila en `p_expRutasDetalle` que **ya trae el `estado`
+resultante en la misma línea** (`CERRADO`, `fechaCierre`, `pedido`, `id`, `propietario`, todo
+junto — más completo que el resto de señales). Nuevo tipo de evento:
+`expedicionAsignadaARuta` (`p_expRutasDetalle`, `accion=INSERT`).
+
+**2. Bug real encontrado y corregido**: el motor de patrones original (`RULES` con una única
+regex por caso, exigiendo el parámetro de acción justo después del nombre del procedimiento)
+**fallaba silenciosamente** en varios casos reales. Confirmado con dos ejemplos concretos:
+
+* La línea de `p_expRutasDetalle` de arriba tiene `@ACCION='INSERT'` **al final** de la línea, no
+  justo después del nombre del procedimiento.
+* Una llamada real a `p_expPedidoLineas` hecha desde la **UI de LUX** (no desde nuestra API) trae
+  `@ACCION='INSERT'` en **mayúsculas** y en una posición tardía, mientras que las llamadas que
+  hace nuestra propia API (`usuario='interfaz'`) traen `@accion='INSERT'` en minúsculas justo al
+  principio. **El mismo procedimiento se loguea de forma distinta según quién lo llama.**
+
+Esto significa que, antes de esta corrección, el watcher probablemente **no detectaba las
+acciones hechas manualmente en la UI de LUX** para varios de los patrones (solo las hechas vía
+API), un hueco serio dado que el objetivo explícito es vigilar la actividad real del almacén.
+
+**Corrección**: `actionPatterns.ts` reescrito para que cada regla compruebe el procedimiento
+(`hasProcedure`, con límite de palabra para no confundir `p_expRutas` con `p_expRutasDetalle` ni
+`p_expediciones` con `p_expedicionesAza`) y el valor del parámetro de acción
+(`extractParam`, ahora sin distinguir mayúsculas/minúsculas en el nombre del parámetro) **de
+forma completamente independiente**, sin asumir adyacencia ni orden. `extractParam` también dejó
+de devolver cadenas vacías como si fueran un valor presente (antes `@id=''` se habría tratado
+como "hay id"; ahora se trata como ausente, igual que `undefined`).
+
+Tests: 150/150 en verde. Nuevos: 4 casos en `tests/watcher/actionPatterns.test.ts` (el caso real
+de `expedicionAsignadaARuta`, que no confunda el `SELECT` de solo lectura del mismo procedimiento,
+y el caso de regresión con `@ACCION` en mayúsculas/no adyacente para `p_expPedidoLineas`), y un
+escenario end-to-end más en `tests/watcher/luxActionWatcher.test.ts`. Verificado también
+reiniciando el proceso real (`npm run watch-logs`) contra los logs reales.
+
+## Fase 25 — Watcher ampliado (2026-09-30)
+
+Ampliación de la fase 24 a petición del usuario: además de los 3 cierres/envío, el watcher ahora
+también detecta:
+
+* **Alta o edición de cabecera** de expedición (`p_expCabeceraAza @accion='ACTUALIZAR'`, del PDF)
+  y de recepción (`p_recCabeceraAza @accion='ACTUALIZAR'`, del PDF) — incluye cambios de
+  dirección, transportista, service level, etc. **Caso especial de alta** (`idPedido`/`idAlbaran`
+  `'0'`): en ese momento LUX aún no ha asignado el id real en la línea de log, así que se resuelve
+  por el **texto** del pedido/albarán (`p_expedicionesAza`/`p_recepcionesAza` con `SELECT` filtrado
+  por ese texto) en vez de por id.
+* **Alta o edición de línea** de expedición (`p_expPedidoLineas @accion='INSERT'/'UPDATE'`, del
+  PDF) y de recepción (`p_recAlbaranLineas`, del PDF) — usa `idPedido`/`idParent` (o
+  `idAlbaran`/`idParent`) de la misma línea, lo que esté presente.
+* **"Pasar a almacén"** (`p_expPasarAlmacenPC @accion='PASAR_ALMACEN_WMS'`, no documentado,
+  confirmado por el usuario reproduciéndolo en vivo — cuidado de no confundir con la variante de
+  eco `PASAR_ALMACEN_WMS_FIN`, que no es una acción nueva).
+
+**Cambios de diseño:**
+
+* Renombrado `ExpedicionWatcher` → `LuxActionWatcher` (`src/watcher/luxActionWatcher.ts`): ya no
+  es solo de expediciones. Añadido `RecepcionesService.obtenerResumenListadoRecepcion(albaran)`
+  (análogo al de expediciones, fase 17) para poder resolver altas/ediciones de recepción.
+- `actionPatterns.ts` reescrito como una lista de reglas (`procedimiento` + `accion`/`estado`
+  exacto → extractor de referencia), en vez de una regex monolítica por caso: más fácil de
+  extender con nuevas acciones en el futuro. `extractParam()` extrae cada `@nombre='valor'` de
+  forma independiente del orden en que aparezcan en la línea (el orden no es constante).
+* El debounce ahora agrupa por una clave que prioriza el id interno sobre el texto (`exp:id:X` >
+  `exp:pedido:X`), para que varias líneas seguidas de una misma alta (que solo tiene texto hasta
+  que se resuelve) no se dupliquen, y para que un alta con `idPedido='0'` compartido por varias
+  peticiones distintas no se agrupe erróneamente bajo la misma clave `'0'`.
+* **Caso sin referencia resoluble**: un `UPDATE` de línea que solo trae el `id` de la propia línea
+  (sin `idPedido`/`idParent`/`pedido`) no se puede resolver a qué pedido pertenece con la
+  información de esa única línea de log. En vez de ignorarlo en silencio, se registra un aviso
+  (`watcher.sinReferencia`) para que el hueco sea visible. TODO — pendiente: investigar si existe
+  alguna forma de resolver el pedido a partir del id de línea (otra consulta encadenada).
+
+Tests: 146/146 en verde. Ampliados `tests/watcher/actionPatterns.test.ts` (todas las reglas
+nuevas) y `tests/watcher/luxActionWatcher.test.ts` (9 escenarios end-to-end: los 3 originales +
+alta de expedición, edición de cabecera, alta de línea, alta de recepción, pasar a almacén, y el
+aviso sin referencia resoluble), más `obtenerResumenListadoRecepcion` en
+`tests/recepciones/RecepcionesService.test.ts`. Verificado también arrancando el proceso real
+contra los logs reales sin errores.
+
+## Fase 24 — Watcher de logs LUX (2026-09-30)
+
+Proceso independiente (`npm run watch-logs`, `scripts/watchLuxLogs.ts`) que seguido de un análisis
+manual exhaustivo de dos logs de LUX en producción (`S:\TLSI\LUX\lux.log.0` y
+`S:\TLSI\LUX_mobile\lux.log.0`, confirmado con el usuario reproduciendo acciones reales sobre el
+pedido `EXP0000074`/`AZA LOGISTICS SLU`/id `11115`), detecta 3 líneas de log confirmadas como
+señales de cambio de estado y re-consulta automáticamente el pedido afectado contra la API de LUX.
+
+**Acciones vigiladas** (ninguna documentada en el PDF del proveedor; confirmadas empíricamente):
+
+| Procedimiento (log) | Confirmado por | Resultado real observado |
+|---|---|---|
+| `p_wm_expSinConsolidar @estado='CERRAR'` (`LUX_mobile`) | Reproducido en vivo por el usuario | `DISCREPANCIAS` o `EXPEDICION` según si faltaba mercancía — **ambiguo desde el log**, por eso siempre se re-consulta la API en vez de asumir el resultado |
+| `p_expediciones @accion='CERRAR_OFICINA_FIN_FORZAR'` (`LUX`) | Reproducido en vivo por el usuario | `CERRADO` |
+| `p_expRutas @accion='ENVIAR_FORZAR'` (`LUX`) | Reproducido en vivo por el usuario | `ENVIADO` — el `id` de esta línea es el de la **ruta**, no de un pedido; se resuelve a los pedidos que lleva vía `p_expRutasDetalle` (también no documentado, confirmado contra el log) |
+
+**Arquitectura** (`src/watcher/`):
+
+* `logTailer.ts` — sigue un fichero por **sondeo periódico** (no `fs.watch`: los logs están en
+  una unidad de red, `S:\...`, donde los eventos nativos de cambio de fichero no son fiables). Se
+  posiciona al final del fichero al arrancar (no reprocesa meses de histórico), detecta
+  rotación/truncado, y reabre el fichero en cada sondeo (más tolerante a cortes de red que
+  mantener un descriptor abierto).
+* `actionPatterns.ts` — expresiones regulares estrictas (procedimiento + acción/estado exactos)
+  para las 3 señales; ignoran deliberadamente cualquier otra acción de los mismos procedimientos
+  (p. ej. `SELECT`, `CERRAR_OFICINA_INICIO`, `ENVIAR` sin `_FORZAR`).
+* `routeResolver.ts` — resuelve una ruta a sus pedidos vía `p_expRutasDetalle` (añadido a
+  `src/lux/procedures/whitelist.ts`, ahora 8 procedimientos).
+* `expedicionWatcher.ts` — orquestador: agrupa varias líneas seguidas del mismo pedido en una
+  ventana de espera (`WATCHER_DEBOUNCE_MS`, por defecto 5 s) en una sola re-consulta; reutiliza
+  `ExpedicionesService`/`LuxClient` directamente (sin pasar por HTTP — es un consumidor más de la
+  librería interna, tal como prevé `docs/architecture.md`).
+* `watcherConfig.ts` — configuración propia (`LUX_LOG_PATH`, `LUX_MOBILE_LOG_PATH`,
+  `WATCHER_POLL_MS`, `WATCHER_DEBOUNCE_MS`), separada de `AppConfig` porque el servidor HTTP
+  principal no la necesita.
+
+**Decisión de alcance** (confirmada con el usuario): el resultado de cada detección solo se
+**registra en el log estructurado del propio watcher** (`watcher.pedidoActualizado`: idPedido,
+pedido, propietario, estado, motivos, duración) — no hay base de datos ni otro sistema
+involucrado todavía. Es la base para conectar algo después sin comprometerse ahora a dónde va.
+
+**Es de "mejor esfuerzo", no una fuente de verdad transaccional**: si el proceso está parado o la
+unidad de red no está accesible un momento, no hay reintento retroactivo más allá de lo que
+alcance a leer la próxima vez que sondee. Para consistencia fuerte seguiría haciendo falta una
+reconciliación periódica aparte (polling por ventana deslizante, ya analizado y descartado como
+único método por su coste, pero sigue siendo un buen complemento/red de seguridad).
+
+Verificado: arrancado contra los ficheros reales (`S:\TLSI\LUX\lux.log.0`,
+`S:\TLSI\LUX_mobile\lux.log.0`) y el LUX real, sin errores de acceso a la unidad de red, durante
+varios ciclos de sondeo.
+
+Tests: 131/131 en verde. Nuevos: `tests/watcher/actionPatterns.test.ts`,
+`tests/watcher/logTailer.test.ts` (ficheros temporales reales, incluye rotación y líneas
+parciales), `tests/watcher/routeResolver.test.ts`, `tests/watcher/expedicionWatcher.test.ts`
+(extremo a extremo con ficheros reales + mock de LUX, incluyendo el agrupado por debounce y la
+resolución de ruta a varios pedidos).
 
 Durante la sesión de análisis de logs de LUX, el mismo problema de "proceso corriendo con una
 variable de `.env` desactualizada" (ya visto en la fase 21 con `LUX_BASE_URL`) volvió a aparecer,

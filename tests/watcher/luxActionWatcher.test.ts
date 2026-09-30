@@ -1,0 +1,427 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { AuthManager } from '../../src/auth';
+import { LuxClient } from '../../src/lux/client';
+import { ExpedicionesService } from '../../src/services/expediciones';
+import { RecepcionesService } from '../../src/services/recepciones';
+import { createLogger } from '../../src/logging';
+import { LuxActionWatcher } from '../../src/watcher/luxActionWatcher';
+import type { WatcherConfig } from '../../src/watcher/watcherConfig';
+import type { WatcherSink } from '../../src/watcher/watcherSink';
+import { LuxMockServer } from '../mocks/luxMockServer';
+import { buildTestConfig } from '../mocks/testConfig';
+
+/** Espera hasta que `predicate()` sea true o se agote el tiempo (sondeo simple, sin fake timers:
+ *  el watcher usa setInterval/setTimeout reales con intervalos muy cortos en estos tests). */
+async function waitUntil(predicate: () => boolean, timeoutMs = 2000, stepMs = 20): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error('waitUntil: tiempo agotado esperando la condicion');
+    }
+    await new Promise((resolve) => setTimeout(resolve, stepMs));
+  }
+}
+
+describe('watcher/LuxActionWatcher', () => {
+  let dir: string;
+  let luxLogPath: string;
+  let mobileLogPath: string;
+  let mock: LuxMockServer;
+  let baseUrl: string;
+  let watcher: LuxActionWatcher;
+  let logLines: Record<string, unknown>[];
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  const config: WatcherConfig = {
+    luxLogPath: '',
+    luxMobileLogPath: '',
+    pollIntervalMs: 20,
+    debounceMs: 30,
+  };
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'lux-watcher-'));
+    luxLogPath = join(dir, 'lux.log.0');
+    mobileLogPath = join(dir, 'lux_mobile.log.0');
+    writeFileSync(luxLogPath, '');
+    writeFileSync(mobileLogPath, '');
+    config.luxLogPath = luxLogPath;
+    config.luxMobileLogPath = mobileLogPath;
+
+    mock = new LuxMockServer();
+    baseUrl = await mock.listen();
+
+    logLines = [];
+    const capture = (line: string) => {
+      try {
+        logLines.push(JSON.parse(line));
+      } catch {
+        // ignora lineas no-JSON
+      }
+    };
+    logSpy = vi.spyOn(console, 'log').mockImplementation(capture);
+    vi.spyOn(console, 'warn').mockImplementation(capture);
+    vi.spyOn(console, 'error').mockImplementation(capture);
+  });
+
+  afterEach(async () => {
+    watcher.stop();
+    logSpy.mockRestore();
+    await mock.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function buildWatcher(sink?: WatcherSink): LuxActionWatcher {
+    const appConfig = buildTestConfig({ luxBaseUrl: baseUrl });
+    const auth = new AuthManager(appConfig, createLogger('error'));
+    const luxClient = new LuxClient(appConfig, auth, createLogger('error'));
+    const expedicionesService = new ExpedicionesService(luxClient);
+    const recepcionesService = new RecepcionesService(luxClient);
+    return new LuxActionWatcher(config, luxClient, expedicionesService, recepcionesService, createLogger('debug'), sink);
+  }
+
+  /** Arranca el watcher y espera a que el primer sondeo (que fija la linea base, ver LogTailer)
+   *  ya haya ocurrido, para evitar que la primera linea anadida en el test se trate como
+   *  historico y se ignore. */
+  async function startAndWaitBaseline(sink?: WatcherSink): Promise<void> {
+    watcher = buildWatcher(sink);
+    watcher.start();
+    await new Promise((resolve) => setTimeout(resolve, config.pollIntervalMs + 10));
+  }
+
+  it('detecta el cierre de picking (LUX_mobile) y re-consulta el pedido, agrupando lineas repetidas en una sola llamada', async () => {
+    let llamadasCabecera = 0;
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          llamadasCabecera += 1;
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: '11115', pedido: 'EXP0000074' }] };
+        }
+        if (proc === 'p_expedicionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '11115', pedido: 'EXP0000074', propietario: 'AZA LOGISTICS SLU', estado: 'DISCREPANCIAS' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    await startAndWaitBaseline();
+
+    // Dos lineas seguidas del mismo pedido, dentro de la ventana de debounce: deben agruparse.
+    appendFileSync(
+      mobileLogPath,
+      "30-sep-2026 12:46:33 INFO:   [] exec p_wm_expSinConsolidar @estado='SELECT_DATOS',@identificador='11115'\n",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    appendFileSync(
+      mobileLogPath,
+      "30-sep-2026 12:46:39 INFO:   [] exec p_wm_expSinConsolidar @estado='CERRAR',@identificador='11115'\n",
+    );
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.pedidoActualizado'));
+
+    const evento = logLines.find((l) => l.operacion === 'watcher.pedidoActualizado');
+    expect(evento).toMatchObject({
+      idPedido: '11115',
+      pedido: 'EXP0000074',
+      propietario: 'AZA LOGISTICS SLU',
+      estado: 'DISCREPANCIAS',
+      motivos: 'expedicionCerradaPicking',
+    });
+    expect(llamadasCabecera).toBe(1); // una sola llamada pese a dos lineas de log
+  });
+
+  it('detecta el envio de una ruta (LUX), la resuelve a sus pedidos y re-consulta cada uno', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expRutasDetalle' && body.idParent === '4487') {
+          return { status: 200, body: [{ id: '11115' }, { id: '11200' }] };
+        }
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          const pedido = body.idPedido === '11115' ? 'EXP0000074' : 'EXP0000080';
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: body.idPedido, pedido }] };
+        }
+        if (proc === 'p_expedicionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '1', pedido: body.pedido, propietario: 'AZA LOGISTICS SLU', estado: 'ENVIADO' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    await startAndWaitBaseline();
+
+    appendFileSync(
+      luxLogPath,
+      "30-sep-2026 12:57:22 INFO:   [] exec p_expRutas @accion='ENVIAR_FORZAR',@almacen='SAGUNTO',@usuario='JIbanezM',@id='4487'\n",
+    );
+
+    await waitUntil(() => logLines.filter((l) => l.operacion === 'watcher.pedidoActualizado').length >= 2);
+
+    const idsPedido = logLines
+      .filter((l) => l.operacion === 'watcher.pedidoActualizado')
+      .map((l) => l.idPedido)
+      .sort();
+    expect(idsPedido).toEqual(['11115', '11200']);
+  });
+
+  it('detecta el cierre de oficina forzado (LUX)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: '11115', pedido: 'EXP0000074' }] };
+        }
+        if (proc === 'p_expedicionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '11115', pedido: 'EXP0000074', propietario: 'AZA LOGISTICS SLU', estado: 'CERRADO' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    await startAndWaitBaseline();
+
+    appendFileSync(
+      luxLogPath,
+      "30-sep-2026 12:46:48 INFO:   [] exec p_expediciones @accion='CERRAR_OFICINA_FIN_FORZAR',@almacen='SAGUNTO',@usuario='JIbanezM',@id='11115'\n",
+    );
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.pedidoActualizado'));
+    const evento = logLines.find((l) => l.operacion === 'watcher.pedidoActualizado');
+    expect(evento).toMatchObject({ idPedido: '11115', estado: 'CERRADO', motivos: 'expedicionCerradaOficina' });
+  });
+
+  it('detecta "pasar a almacen" (LUX)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: '11115', pedido: 'EXP0000074' }] };
+        }
+        if (proc === 'p_expedicionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '11115', pedido: 'EXP0000074', propietario: 'AZA LOGISTICS SLU', estado: 'ASIGNADO' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    await startAndWaitBaseline();
+
+    appendFileSync(
+      luxLogPath,
+      "30-sep-2026 12:46:15 INFO:   [] exec p_expPasarAlmacenPC @accion='PASAR_ALMACEN_WMS',@almacen='SAGUNTO',@usuario='JIbanezM',@id='11115'\n",
+    );
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.pedidoActualizado'));
+    const evento = logLines.find((l) => l.operacion === 'watcher.pedidoActualizado');
+    expect(evento).toMatchObject({ idPedido: '11115', estado: 'ASIGNADO', motivos: 'expedicionPasadaAlmacen' });
+  });
+
+  it('detecta la asignacion de un pedido a una ruta (p_expRutasDetalle ACCION=INSERT, caso real EXP0000076)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: '11120', pedido: 'EXP0000076' }] };
+        }
+        if (proc === 'p_expedicionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '11120', pedido: 'EXP0000076', propietario: 'DIPISTOL', estado: 'CERRADO' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    await startAndWaitBaseline();
+
+    appendFileSync(
+      luxLogPath,
+      "28-sep-2026 15:44:09 INFO:   [] exec p_expRutasDetalle @estado='CERRADO',@propietario='DIPISTOL',@fechaCierre='28/09/2026 15:43:22',@pedido='EXP0000076',@id='11120',@ACCION='INSERT',@idParent='4476'\n",
+    );
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.pedidoActualizado'));
+    const evento = logLines.find((l) => l.operacion === 'watcher.pedidoActualizado');
+    expect(evento).toMatchObject({ idPedido: '11120', pedido: 'EXP0000076', estado: 'CERRADO', motivos: 'expedicionAsignadaARuta' });
+  });
+
+  it('detecta el alta de una expedicion nueva (idPedido="0", solo se conoce el texto de pedido)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          // No deberia llamar a SELECT_ONE con idPedido='0' (no hay cabecera real que consultar
+          // todavia), pero si con el id ya resuelto via el resumen del listado (mas abajo).
+          if (body.idPedido === '0') {
+            throw new Error('No deberia consultar SELECT_ONE con idPedido 0');
+          }
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: body.idPedido, pedido: 'EXP0000099' }] };
+        }
+        if (proc === 'p_expedicionesAza' && body.accion === 'SELECT' && body.pedido === 'EXP0000099') {
+          return { status: 200, body: [{ id: '99999', pedido: 'EXP0000099', propietario: 'AZA LOGISTICS SLU', estado: 'CREACION' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    await startAndWaitBaseline();
+
+    appendFileSync(
+      luxLogPath,
+      "30-sep-2026 09:42:17 INFO:   [] exec p_expCabeceraAza @accion='ACTUALIZAR',@idPedido='0',@propietario='AZA LOGISTICS SLU',@pedido='EXP0000099',@usuario='ARodriguezSP'\n",
+    );
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.pedidoActualizado'));
+    const evento = logLines.find((l) => l.operacion === 'watcher.pedidoActualizado');
+    expect(evento).toMatchObject({ idPedido: '99999', pedido: 'EXP0000099', estado: 'CREACION', motivos: 'expedicionCabeceraActualizada' });
+  });
+
+  it('detecta la edicion de cabecera de una expedicion existente (direccion, service level...)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: '11115', pedido: 'EXP0000074' }] };
+        }
+        if (proc === 'p_expedicionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '11115', pedido: 'EXP0000074', propietario: 'AZA LOGISTICS SLU', estado: 'CREACION' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    await startAndWaitBaseline();
+
+    appendFileSync(
+      luxLogPath,
+      "30-sep-2026 14:30:55 INFO:   [] exec p_expCabeceraAza @accion='ACTUALIZAR',@idPedido='11115',@pedido='EXP0000074',@transportista='SUSMEDIOS',@usuario='RCaroH'\n",
+    );
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.pedidoActualizado'));
+    const evento = logLines.find((l) => l.operacion === 'watcher.pedidoActualizado');
+    expect(evento).toMatchObject({ idPedido: '11115', pedido: 'EXP0000074', motivos: 'expedicionCabeceraActualizada' });
+  });
+
+  it('detecta el alta de una linea de expedicion (idParent)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: '11115', pedido: 'EXP0000074' }] };
+        }
+        if (proc === 'p_expedicionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '11115', pedido: 'EXP0000074', propietario: 'AZA LOGISTICS SLU', estado: 'CREACION' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    await startAndWaitBaseline();
+
+    appendFileSync(
+      luxLogPath,
+      "16-sep-2026 08:10:04 INFO:   [] exec p_expPedidoLineas @accion='INSERT',@lote='L2026',@cantidadPedida='24',@usuario='interfaz',@linea='2',@referencia='3760297544959',@idParent='11115'\n",
+    );
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.pedidoActualizado'));
+    const evento = logLines.find((l) => l.operacion === 'watcher.pedidoActualizado');
+    expect(evento).toMatchObject({ idPedido: '11115', motivos: 'expedicionLineaModificada' });
+  });
+
+  it('registra un aviso (sin llamar a la API) si una linea modificada no trae ninguna referencia resoluble', async () => {
+    mock.updateOptions({ onProc: () => ({ status: 200, body: [{ mensaje: 'OK' }] }) });
+
+    await startAndWaitBaseline();
+
+    // UPDATE que solo trae el id de la propia linea, sin idPedido/idParent/pedido -- no se puede
+    // resolver a que pedido pertenece con la informacion de esta unica linea de log.
+    appendFileSync(luxLogPath, "30-sep-2026 10:00:00 INFO:   [] exec p_expPedidoLineas @accion='UPDATE',@id='55010',@cantidadPedida='30'\n");
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.sinReferencia'));
+    const aviso = logLines.find((l) => l.operacion === 'watcher.sinReferencia');
+    expect(aviso).toMatchObject({ tipo: 'expedicionLineaModificada', resultado: 'ERROR' });
+    expect(logLines.some((l) => l.operacion === 'watcher.pedidoActualizado')).toBe(false);
+  });
+
+  it('detecta el alta de una recepcion nueva (idAlbaran="0", solo se conoce el texto de albaran)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_ONE') {
+          if (body.idAlbaran === '0') {
+            throw new Error('No deberia consultar SELECT_ONE con idAlbaran 0');
+          }
+          return { status: 200, body: [{ mensaje: 'OK', idAlbaran: body.idAlbaran, albaran: 'ALB-99' }] };
+        }
+        if (proc === 'p_recepcionesAza' && body.accion === 'SELECT' && body.albaran === 'ALB-99') {
+          return { status: 200, body: [{ id: '8000', albaran: 'ALB-99', propietario: 'ROC', estado: 'CREACION' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    await startAndWaitBaseline();
+
+    appendFileSync(
+      luxLogPath,
+      "28-sep-2026 15:37:03 INFO:   [] exec p_recCabeceraAza @accion='ACTUALIZAR',@idAlbaran='0',@codProveedor='ROC',@propietario='ROC',@albaran='ALB-99',@usuario='ARodriguezSP'\n",
+    );
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.albaranActualizado'));
+    const evento = logLines.find((l) => l.operacion === 'watcher.albaranActualizado');
+    expect(evento).toMatchObject({ idAlbaran: '8000', albaran: 'ALB-99', estado: 'CREACION', motivos: 'recepcionCabeceraActualizada' });
+  });
+
+  it('llama al sink (paso 3, futura persistencia) con el resultado tras un refresco correcto de expedicion', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: '11115', pedido: 'EXP0000074' }] };
+        }
+        if (proc === 'p_expedicionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '11115', pedido: 'EXP0000074', propietario: 'AZA LOGISTICS SLU', estado: 'CERRADO' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    const onExpedicionActualizada = vi.fn();
+    await startAndWaitBaseline({ onExpedicionActualizada });
+
+    appendFileSync(
+      luxLogPath,
+      "30-sep-2026 12:46:48 INFO:   [] exec p_expediciones @accion='CERRAR_OFICINA_FIN_FORZAR',@almacen='SAGUNTO',@usuario='JIbanezM',@id='11115'\n",
+    );
+
+    await waitUntil(() => onExpedicionActualizada.mock.calls.length > 0);
+    expect(onExpedicionActualizada).toHaveBeenCalledWith({
+      idPedido: '11115',
+      pedido: 'EXP0000074',
+      propietario: 'AZA LOGISTICS SLU',
+      estado: 'CERRADO',
+      motivos: ['expedicionCerradaOficina'],
+      cabecera: { mensaje: 'OK', idPedido: '11115', pedido: 'EXP0000074' },
+      lineas: [],
+      contenedores: [],
+    });
+  });
+
+  it('si el sink falla, el refresco ya registrado en el log no se ve afectado (se registra watcher.sinkError aparte)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: '11115', pedido: 'EXP0000074' }] };
+        }
+        if (proc === 'p_expedicionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '11115', pedido: 'EXP0000074', propietario: 'AZA LOGISTICS SLU', estado: 'CERRADO' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    const onExpedicionActualizada = vi.fn().mockRejectedValue(new Error('BD no disponible'));
+    await startAndWaitBaseline({ onExpedicionActualizada });
+
+    appendFileSync(
+      luxLogPath,
+      "30-sep-2026 12:46:48 INFO:   [] exec p_expediciones @accion='CERRAR_OFICINA_FIN_FORZAR',@almacen='SAGUNTO',@usuario='JIbanezM',@id='11115'\n",
+    );
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.sinkError'));
+    expect(logLines.some((l) => l.operacion === 'watcher.pedidoActualizado' && l.resultado === 'OK')).toBe(true);
+    const errorLine = logLines.find((l) => l.operacion === 'watcher.sinkError');
+    expect(errorLine).toMatchObject({ resultado: 'ERROR', dominio: 'expedicion', error: 'BD no disponible' });
+  });
+});

@@ -7,12 +7,18 @@
  * `p_expPedidoContenedores` es una excepcion: no viene del PDF del proveedor, se anadio tras
  * confirmar su existencia y comportamiento (solo SELECT_INICIO) contra el servidor real de LUX,
  * ver docs/lux-api-analysis.md §14.
+ *
+ * `p_expRutasDetalle` tambien es una excepcion, anadida para el watcher de logs (src/watcher/):
+ * resuelve que pedidos lleva una ruta de transporte (accion=SELECT, idParent=<idRuta>). Confirmado
+ * contra el log real de LUX, ver docs/lux-api-analysis.md §16. Solo lectura, no expuesto por
+ * ningun endpoint de /api/*.
  */
 export const PROCEDURE_WHITELIST = [
   'p_expCabeceraAza',
   'p_expPedidoLineas',
   'p_expedicionesAza',
   'p_expPedidoContenedores',
+  'p_expRutasDetalle',
   'p_recCabeceraAza',
   'p_recAlbaranLineas',
   'p_recepcionesAza',

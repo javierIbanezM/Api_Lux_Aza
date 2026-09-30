@@ -15,7 +15,8 @@
     "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.ts\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "create-web-user": "tsx scripts/createWebUser.ts"
+    "create-web-user": "tsx scripts/createWebUser.ts",
+    "watch-logs": "tsx scripts/watchLuxLogs.ts"
   },
   "dependencies": {
     "axios": "^1.20.0",

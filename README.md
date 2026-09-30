@@ -155,6 +155,51 @@ usa las credenciales de LUX.
   `http://localhost:3000/almacen/login` (o el `PORT` configurado). Tras iniciar sesión, redirige a
   `http://localhost:3000/almacen/expediciones`.
 
+## Watcher de logs LUX (near-real-time)
+
+Proceso **independiente** del servidor HTTP (`npm run watch-logs`, `scripts/watchLuxLogs.ts`) que
+vigila los logs propios de LUX (no la API — el fichero de log del servidor Java en una unidad de
+red) para detectar cuando cambia el estado de un pedido, sin tener que hacer polling constante a
+la API.
+
+* Vigila 9 tipos de acción (ver `docs/lux-api-analysis.md` §16 y `docs/progress.md` fases 24-26),
+  tanto de expediciones como de recepciones:
+  * Alta/edición de cabecera (`p_expCabeceraAza`/`p_recCabeceraAza @accion='ACTUALIZAR'`, del PDF)
+    — dirección, transportista, service level, etc. Un alta (id `'0'`) se resuelve por el texto
+    del pedido/albarán, ya que LUX aún no ha asignado el id real en ese momento.
+  * Alta/edición de línea (`p_expPedidoLineas`/`p_recAlbaranLineas`, del PDF).
+  * Cierre de picking con/sin discrepancias (`p_wm_expSinConsolidar @estado='CERRAR'`, no
+    documentado, confirmado en vivo).
+  * Cierre de oficina (`p_expediciones @accion='CERRAR_OFICINA_FIN_FORZAR'`, no documentado).
+  * **Cierre por asignación a ruta** (`p_expRutasDetalle @accion='INSERT'`, no documentado) —
+    tercera vía de cierre distinta a las dos anteriores, confirmada con un caso real.
+  * Pasar a almacén (`p_expPasarAlmacenPC @accion='PASAR_ALMACEN_WMS'`, no documentado).
+  * Envío de ruta (`p_expRutas @accion='ENVIAR_FORZAR'`, no documentado), resuelto a los pedidos
+    de esa ruta vía `p_expRutasDetalle` (tampoco documentado).
+  * **Importante**: el mismo procedimiento puede loguearse con el parámetro de acción en
+    minúsculas y justo después del nombre (llamadas de nuestra propia API) o en **mayúsculas y en
+    cualquier posición** de la línea (llamadas desde la UI de LUX/PDA). El motor de patrones lo
+    detecta en ambos casos — esto fue un bug real corregido en la fase 26, no una teoría.
+* Al detectar una, re-consulta el pedido/albarán afectado contra LUX (reutilizando
+  `ExpedicionesService`/`RecepcionesService` directamente, sin pasar por `/api/*`) y registra el
+  resultado en su propio log estructurado (`watcher.pedidoActualizado` /
+  `watcher.albaranActualizado`). Si una línea no trae ninguna referencia resoluble a un
+  pedido/albarán (p. ej. un `UPDATE` de línea que solo lleva el id de la propia línea), se
+  registra un aviso (`watcher.sinReferencia`) en vez de ignorarlo en silencio. Por ahora **no**
+  escribe en ninguna base de datos — es la base para conectar algo después.
+* Variables propias (ver `.env.example`): `LUX_LOG_PATH`, `LUX_MOBILE_LOG_PATH` (rutas a los
+  ficheros de log activos), `WATCHER_POLL_MS` (sondeo, por defecto 3 s),
+  `WATCHER_DEBOUNCE_MS` (agrupa varias líneas seguidas del mismo pedido en una sola re-consulta,
+  por defecto 5 s).
+* Es de **"mejor esfuerzo"**, no una fuente de verdad transaccional: si el proceso está parado o
+  la unidad de red no está disponible un momento, no reprocesa retroactivamente. Para
+  consistencia fuerte haría falta además una reconciliación periódica (polling por ventana,
+  documentado como alternativa en `docs/progress.md` fase 24).
+
+```bash
+npm run watch-logs
+```
+
 ## Ejecutar
 
 ```bash

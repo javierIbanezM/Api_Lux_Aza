@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { assertValidProcedureName, isWhitelistedProcedure, PROCEDURE_WHITELIST } from '../../src/lux/procedures';
 
 describe('whitelist de procedimientos', () => {
-  it('contiene exactamente los 7 procedimientos autorizados', () => {
+  it('contiene exactamente los 8 procedimientos autorizados', () => {
     expect([...PROCEDURE_WHITELIST].sort()).toEqual(
       [
         'p_expCabeceraAza',
         'p_expPedidoLineas',
         'p_expedicionesAza',
         'p_expPedidoContenedores',
+        'p_expRutasDetalle',
         'p_recCabeceraAza',
         'p_recAlbaranLineas',
         'p_recepcionesAza',
@@ -23,6 +24,10 @@ describe('whitelist de procedimientos', () => {
 
   it('acepta p_expPedidoContenedores (confirmado contra el servidor real, no viene del PDF)', () => {
     expect(isWhitelistedProcedure('p_expPedidoContenedores')).toBe(true);
+  });
+
+  it('acepta p_expRutasDetalle (confirmado contra el log real, usado por el watcher)', () => {
+    expect(isWhitelistedProcedure('p_expRutasDetalle')).toBe(true);
   });
 
   it('rechaza un procedimiento que no empieza por p_', () => {

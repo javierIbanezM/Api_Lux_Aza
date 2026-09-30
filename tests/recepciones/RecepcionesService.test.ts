@@ -214,4 +214,26 @@ describe('RecepcionesService', () => {
     const lineas = await service.obtenerLineasRecepcion('3012');
     expect(lineas).toHaveLength(1);
   });
+
+  it('obtenerResumenListadoRecepcion filtra p_recepcionesAza por albaran exacto (sin comodin)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        expect(proc).toBe('p_recepcionesAza');
+        expect(body).toEqual({ accion: 'SELECT', albaran: 'REC0000067' });
+        return { status: 200, body: [{ id: '7837', albaran: 'REC0000067', propietario: 'ROC', estado: 'CREACION' }] };
+      },
+    });
+    const resumen = await service.obtenerResumenListadoRecepcion('REC0000067');
+    expect(resumen?.estado).toBe('CREACION');
+  });
+
+  it('obtenerResumenListadoRecepcion no llama a LUX si el albaran viene vacio', async () => {
+    mock.updateOptions({
+      onProc: () => {
+        throw new Error('No deberia llamar a LUX con albaran vacio');
+      },
+    });
+    const resumen = await service.obtenerResumenListadoRecepcion('');
+    expect(resumen).toBeUndefined();
+  });
 });

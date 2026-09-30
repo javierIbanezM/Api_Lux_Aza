@@ -176,6 +176,25 @@ export class RecepcionesService {
     return rows as RecepcionLinea[];
   }
 
+  /**
+   * Fila completa del visor/listado (p_recepcionesAza, accion=SELECT) para un albaran conocido,
+   * filtrando por `albaran` exacto (sin comodin). Usado por el watcher de logs (src/watcher/)
+   * para resolver altas de recepcion (idAlbaran='0' en el log, solo se conoce el texto del
+   * albaran hasta que LUX asigna el id real) -- ver docs/lux-api-analysis.md §16.
+   */
+  async obtenerResumenListadoRecepcion(albaran: string, almacen?: string): Promise<RecepcionListItem | undefined> {
+    if (!albaran) {
+      return undefined;
+    }
+    const rows = await this.luxClient.callProc(
+      'p_recepcionesAza',
+      'SELECT',
+      { albaran },
+      { operacion: 'recepciones.obtenerResumenListadoRecepcion', almacen },
+    );
+    return rows[0] as RecepcionListItem | undefined;
+  }
+
   private describeError(err: unknown): string {
     if (err instanceof LuxError) {
       return err.message;
