@@ -41,9 +41,13 @@ export function createJsonFileSink(dir: string, logger: Logger): WatcherSink {
     return dirListo;
   };
 
-  const guardar = async (nombreBase: string, data: unknown): Promise<void> => {
+  /** El timestamp va PRIMERO en el nombre de fichero (no al final) para que el orden alfabetico
+   *  (el que usa cualquier explorador de ficheros, incluido el de VSCode, al ordenar "por nombre")
+   *  coincida con el orden cronologico, sin tener que ordenar "por fecha de modificacion" a mano. */
+  const guardar = async (sufijo: string, data: unknown): Promise<void> => {
     await asegurarDir();
-    const ruta = join(dir, `${nombreBase}.json`);
+    const nombre = `${timestampParaNombre()}--${sufijo}.json`;
+    const ruta = join(dir, nombre);
     await writeFile(ruta, JSON.stringify(data, null, 2), 'utf-8');
     logger.info('Evento del watcher guardado en JSON', {
       operacion: 'watcher.jsonSink.guardado',
@@ -52,9 +56,10 @@ export function createJsonFileSink(dir: string, logger: Logger): WatcherSink {
     });
   };
 
-  /** Borra todos los ficheros `<prefijo>*.json` de la carpeta (los eventos previos de un mismo
-   *  pedido/albaran). Tolerante a que la carpeta aun no exista (nada que borrar todavia). */
-  const borrarFicherosDe = async (prefijo: string): Promise<void> => {
+  /** Borra todos los ficheros `*--<sufijo>.json` de la carpeta (los eventos previos de un mismo
+   *  pedido/albaran, ahora que el timestamp va al principio del nombre en vez de al final).
+   *  Tolerante a que la carpeta aun no exista (nada que borrar todavia). */
+  const borrarFicherosDe = async (sufijo: string): Promise<void> => {
     let nombres: string[];
     try {
       nombres = await readdir(dir);
@@ -64,7 +69,7 @@ export function createJsonFileSink(dir: string, logger: Logger): WatcherSink {
       }
       throw err;
     }
-    const propios = nombres.filter((nombre) => nombre.startsWith(prefijo) && nombre.endsWith('.json'));
+    const propios = nombres.filter((nombre) => nombre.endsWith(`--${sufijo}.json`));
     if (propios.length === 0) {
       return;
     }
@@ -73,23 +78,23 @@ export function createJsonFileSink(dir: string, logger: Logger): WatcherSink {
       operacion: 'watcher.jsonSink.borrado',
       resultado: 'OK',
       cantidad: propios.length,
-      prefijo,
+      sufijo,
     });
   };
 
   return {
     onExpedicionActualizada: async (result: ExpedicionActualizada) => {
-      const prefijo = `expedicion-${sanitizar(result.pedido)}-`;
-      await borrarFicherosDe(prefijo); // si habia uno anterior de este mismo pedido, se descarta
+      const sufijo = `expedicion-${sanitizar(result.pedido)}`;
+      await borrarFicherosDe(sufijo); // si habia uno anterior de este mismo pedido, se descarta
       if (result.estado && ESTADOS_FINALES_EXPEDICION.has(result.estado)) {
         return; // estado final: no dejamos ni el ultimo, ya no aporta nada
       }
-      await guardar(`${prefijo}${timestampParaNombre()}`, result);
+      await guardar(sufijo, result);
     },
     onAlbaranActualizado: async (result: AlbaranActualizado) => {
-      const prefijo = `recepcion-${sanitizar(result.albaran)}-`;
-      await borrarFicherosDe(prefijo); // si habia uno anterior de este mismo albaran, se descarta
-      await guardar(`${prefijo}${timestampParaNombre()}`, result);
+      const sufijo = `recepcion-${sanitizar(result.albaran)}`;
+      await borrarFicherosDe(sufijo); // si habia uno anterior de este mismo albaran, se descarta
+      await guardar(sufijo, result);
     },
   };
 }

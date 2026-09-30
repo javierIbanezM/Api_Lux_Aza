@@ -34,7 +34,8 @@ describe('watcher/jsonFileSink', () => {
 
     const ficheros = readdirSync(dir);
     expect(ficheros).toHaveLength(1);
-    expect(ficheros[0]).toMatch(/^expedicion-EXP0000078-.*\.json$/);
+    // El timestamp va PRIMERO en el nombre (para que el orden alfabetico sea cronologico), no al final.
+    expect(ficheros[0]).toMatch(/^\d{4}-\d{2}-\d{2}T.*--expedicion-EXP0000078\.json$/);
 
     const contenido = JSON.parse(readFileSync(join(dir, ficheros[0] as string), 'utf-8'));
     expect(contenido).toEqual(result);
@@ -59,7 +60,7 @@ describe('watcher/jsonFileSink', () => {
 
     const ficheros = readdirSync(dir);
     expect(ficheros).toHaveLength(1);
-    expect(ficheros[0]).toMatch(/^recepcion-REC0000068-.*\.json$/);
+    expect(ficheros[0]).toMatch(/^\d{4}-\d{2}-\d{2}T.*--recepcion-REC0000068\.json$/);
 
     const contenido = JSON.parse(readFileSync(join(dir, ficheros[0] as string), 'utf-8'));
     expect(contenido).toEqual(result);
@@ -163,7 +164,32 @@ describe('watcher/jsonFileSink', () => {
 
     const ficheros = readdirSync(dir);
     expect(ficheros).toHaveLength(1);
-    expect(ficheros[0]).toMatch(/^expedicion-EXP0000078-/);
+    expect(ficheros[0]).toMatch(/--expedicion-EXP0000078\.json$/);
+  });
+
+  it('el orden alfabetico de los nombres de fichero coincide con el orden cronologico de creacion', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    const sink = createJsonFileSink(dir, createLogger('error'));
+
+    // 3 pedidos DISTINTOS (para que ninguno se borre por el dedup) creados en orden, con nombres
+    // de pedido que alfabeticamente irian al reves (Z, M, A) si no fuera por el timestamp delante.
+    await sink.onExpedicionActualizada?.({
+      idPedido: '1', pedido: 'ZETA', propietario: 'X', estado: 'PENDIENTE', motivos: ['expedicionCabeceraActualizada'], lineas: [], contenedores: [],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await sink.onExpedicionActualizada?.({
+      idPedido: '2', pedido: 'EME', propietario: 'X', estado: 'PENDIENTE', motivos: ['expedicionCabeceraActualizada'], lineas: [], contenedores: [],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await sink.onExpedicionActualizada?.({
+      idPedido: '3', pedido: 'ALFA', propietario: 'X', estado: 'PENDIENTE', motivos: ['expedicionCabeceraActualizada'], lineas: [], contenedores: [],
+    });
+
+    const ficheros = readdirSync(dir); // readdirSync ya devuelve en orden alfabetico
+    expect(ficheros).toHaveLength(3);
+    expect(ficheros[0]).toMatch(/--expedicion-ZETA\.json$/);
+    expect(ficheros[1]).toMatch(/--expedicion-EME\.json$/);
+    expect(ficheros[2]).toMatch(/--expedicion-ALFA\.json$/);
   });
 
   it('ENVIADO sin ficheros previos en disco no falla (carpeta ya vacia o inexistente)', async () => {
