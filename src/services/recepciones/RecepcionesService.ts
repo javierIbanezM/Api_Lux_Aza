@@ -1,6 +1,6 @@
 import type { LuxClient } from '../../lux/client';
 import { buildProcBody } from '../../lux/utils';
-import { LuxError, LuxValidationError } from '../../lux/errors';
+import { describeError, parseOrThrow, type LineaFallida } from '../shared';
 import type {
   Recepcion,
   RecepcionHU,
@@ -21,9 +21,14 @@ import {
   type ListarRecepcionesFiltersDTO,
 } from '../../validation/recepciones';
 
-export interface LineaFallida<TInput> {
-  input: TInput;
-  error: string;
+export type { LineaFallida };
+
+/** Vista de una recepcion: cabecera + datos extra + lineas (las zonas de descarga son de otro
+ *  servicio, ver CatalogosService.selectDescargas). */
+export interface RecepcionDetalle {
+  cabecera: Recepcion;
+  datosExtra: Record<string, string>;
+  lineas: RecepcionLinea[];
 }
 
 export interface CrearRecepcionResult {
@@ -35,14 +40,6 @@ export interface CrearRecepcionResult {
     ok: RecepcionLinea[];
     fallidas: LineaFallida<Omit<LineaRecepcionDTO, 'idParent'>>[];
   };
-}
-
-function parseOrThrow<T>(schema: { safeParse: (v: unknown) => { success: boolean; data?: T; error?: unknown } }, input: unknown): T {
-  const result = schema.safeParse(input);
-  if (!result.success) {
-    throw new LuxValidationError('Datos de entrada invalidos', result.error);
-  }
-  return result.data as T;
 }
 
 /**
@@ -92,7 +89,7 @@ export class RecepcionesService {
         } catch (err) {
           fallidas.push({
             input: rawLinea as Omit<LineaRecepcionDTO, 'idParent'>,
-            error: this.describeError(err),
+            error: describeError(err),
           });
         }
       }
@@ -149,19 +146,23 @@ export class RecepcionesService {
   async listarRecepciones(filters: ListarRecepcionesFiltersDTO = {}, almacen?: string): Promise<RecepcionListItem[]> {
     const dto = parseOrThrow(listarRecepcionesFiltersSchema, filters);
     const body = buildProcBody(dto as RecepcionListFilters);
-    const rows = await this.luxClient.callProc('p_recepcionesAza', 'SELECT', body, {
+    const pedirNoCerradas = this.luxClient.callProc('p_recepcionesAza', 'SELECT', body, {
       operacion: 'recepciones.listarRecepciones',
       almacen,
     });
     if (dto.estado) {
-      return rows as RecepcionListItem[];
+      return (await pedirNoCerradas) as RecepcionListItem[];
     }
-    const cerradas = await this.luxClient.callProc(
-      'p_recepcionesAza',
-      'SELECT',
-      { ...body, estado: 'CERRADO' },
-      { operacion: 'recepciones.listarRecepciones.cerradas', almacen },
-    );
+    // Las dos consultas son independientes: se lanzan en paralelo (antes, una tras otra).
+    const [rows, cerradas] = await Promise.all([
+      pedirNoCerradas,
+      this.luxClient.callProc(
+        'p_recepcionesAza',
+        'SELECT',
+        { ...body, estado: 'CERRADO' },
+        { operacion: 'recepciones.listarRecepciones.cerradas', almacen },
+      ),
+    ]);
     return [...rows, ...cerradas] as RecepcionListItem[];
   }
 
@@ -173,6 +174,16 @@ export class RecepcionesService {
       { operacion: 'recepciones.obtenerRecepcion', almacen },
     );
     return rows[0] as Recepcion;
+  }
+
+  /** Cabecera + datos extra + lineas en paralelo. Unico punto que ensambla el detalle. */
+  async obtenerDetalle(idAlbaran: string, almacen?: string): Promise<RecepcionDetalle> {
+    const [cabecera, datosExtra, lineas] = await Promise.all([
+      this.obtenerRecepcion(idAlbaran, almacen),
+      this.obtenerDatosExtraRecepcion(idAlbaran, almacen),
+      this.obtenerLineasRecepcion(idAlbaran, almacen),
+    ]);
+    return { cabecera, datosExtra, lineas };
   }
 
   async obtenerDatosExtraRecepcion(idAlbaran: string, almacen?: string): Promise<Record<string, string>> {
@@ -245,12 +256,5 @@ export class RecepcionesService {
       { operacion: 'recepciones.obtenerHUsRecepcion', almacen },
     );
     return rows as RecepcionHU[];
-  }
-
-  private describeError(err: unknown): string {
-    if (err instanceof LuxError) {
-      return err.message;
-    }
-    return err instanceof Error ? err.message : String(err);
   }
 }

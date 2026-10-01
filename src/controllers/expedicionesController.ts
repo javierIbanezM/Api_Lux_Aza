@@ -58,18 +58,8 @@ export function createExpedicionesController(service: ExpedicionesService) {
     }),
 
     obtenerDetalle: asyncHandler(async (req: Request, res: Response) => {
-      const idPedido = req.params.idPedido as string;
-      const almacen = resolveAlmacen(req);
-      const [cabecera, datosExtra, lineas, contenedores] = await Promise.all([
-        service.obtenerExpedicion(idPedido, almacen),
-        service.obtenerDatosExtraExpedicion(idPedido, almacen),
-        service.obtenerLineasExpedicion(idPedido, almacen),
-        service.obtenerContenedoresExpedicion(idPedido, almacen),
-      ]);
-      // Fila completa del visor (p_expedicionesAza): columnas que no trae p_expCabeceraAza
-      // (transportista, ruta, muelle, prioridad, etc.), ver docs/lux-api-analysis.md §6.3.
-      const resumenListado = await service.obtenerResumenListadoExpedicion(cabecera.pedido, almacen);
-      res.status(200).json({ cabecera, datosExtra, lineas, contenedores, resumenListado });
+      const detalle = await service.obtenerDetalle(req.params.idPedido as string, resolveAlmacen(req));
+      res.status(200).json(detalle);
     }),
 
     obtenerLineas: asyncHandler(async (req: Request, res: Response) => {

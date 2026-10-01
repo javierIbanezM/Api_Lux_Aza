@@ -32,7 +32,9 @@ interface TailerState {
  */
 export class LogTailer {
   private state: TailerState | undefined;
-  private partialLine = '';
+  /** Bytes de una linea aun sin terminar (se guardan como bytes, no como texto, para no partir un
+   *  caracter UTF-8 multibyte si el corte de lectura cae en mitad de el). */
+  private partial: Buffer = Buffer.alloc(0);
   private stateLoaded: boolean;
   private polling = false;
   private readonly rotatedPath: string | undefined;
@@ -74,14 +76,14 @@ export class LogTailer {
         ? stats.size >= saved.position
         : fingerprint === saved.fingerprint;
 
-      let text = '';
+      let data: Buffer;
       const newPosition = stats.size;
 
       if (sameFile) {
         if (stats.size < saved.position) {
           // Truncado del propio fichero: empezamos desde el principio.
           saved.position = 0;
-          this.partialLine = '';
+          this.partial = Buffer.alloc(0);
         }
         if (stats.size === saved.position) {
           if (saved.fingerprint === undefined && fingerprint !== undefined) {
@@ -90,13 +92,13 @@ export class LogTailer {
           }
           return; // sin novedades
         }
-        text = await this.readRange(this.filePath, saved.position, stats.size);
+        data = await this.readRange(this.filePath, saved.position, stats.size);
       } else {
-        text = await this.readAfterRotation(saved, stats.size);
+        data = await this.readAfterRotation(saved, stats.size);
       }
 
       this.state = { position: newPosition, fingerprint };
-      this.emit(text);
+      this.emit(data);
       await this.saveState();
     } catch (err) {
       this.onError(err);
@@ -107,8 +109,8 @@ export class LogTailer {
 
   /** Rotacion detectada: recupera lo que faltaba de `lux.log.1` (si es el fichero que se estaba
    *  leyendo) y lee `lux.log.0` completo. */
-  private async readAfterRotation(saved: TailerState, currentSize: number): Promise<string> {
-    let text = '';
+  private async readAfterRotation(saved: TailerState, currentSize: number): Promise<Buffer> {
+    const parts: Buffer[] = [];
     let foundRotated = false;
 
     if (this.rotatedPath && saved.fingerprint !== undefined) {
@@ -116,7 +118,7 @@ export class LogTailer {
         const rotatedStats = await stat(this.rotatedPath);
         const rotatedFingerprint = await this.readFingerprint(this.rotatedPath, rotatedStats.size);
         if (rotatedFingerprint === saved.fingerprint && rotatedStats.size >= saved.position) {
-          text += await this.readRange(this.rotatedPath, saved.position, rotatedStats.size);
+          parts.push(await this.readRange(this.rotatedPath, saved.position, rotatedStats.size));
           foundRotated = true;
         }
       } catch {
@@ -125,7 +127,7 @@ export class LogTailer {
     }
 
     if (!foundRotated) {
-      this.partialLine = '';
+      this.partial = Buffer.alloc(0);
       this.onError(
         new Error(
           `Rotacion detectada en ${this.filePath} pero no se encontro el fichero previo en lux.log.1; ` +
@@ -134,32 +136,41 @@ export class LogTailer {
       );
     }
 
-    return text + (await this.readRange(this.filePath, 0, currentSize));
+    parts.push(await this.readRange(this.filePath, 0, currentSize));
+    return Buffer.concat(parts);
   }
 
-  private emit(text: string): void {
-    const chunk = this.partialLine + text;
-    const lines = chunk.split(/\r?\n/);
-    // La ultima "linea" puede estar incompleta si el escritor aun no ha terminado de
-    // escribirla en este instante; se guarda para completarla en el siguiente sondeo.
-    this.partialLine = lines.pop() ?? '';
+  private emit(data: Buffer): void {
+    const all = Buffer.concat([this.partial, data]);
+    // Solo se procesa hasta el ultimo salto de linea: lo que queda es una linea que el escritor
+    // aun no ha terminado de escribir, se completa en el siguiente sondeo.
+    const lastNewline = all.lastIndexOf(0x0a);
+    if (lastNewline === -1) {
+      this.partial = all;
+      return;
+    }
+    this.partial = all.subarray(lastNewline + 1);
 
-    const nonEmpty = lines.filter((line) => line.length > 0);
-    if (nonEmpty.length > 0) {
-      this.onLines(nonEmpty);
+    const lines = all
+      .subarray(0, lastNewline + 1)
+      .toString('utf-8')
+      .split(/\r?\n/)
+      .filter((line) => line.length > 0);
+    if (lines.length > 0) {
+      this.onLines(lines);
     }
   }
 
-  private async readRange(path: string, from: number, to: number): Promise<string> {
+  private async readRange(path: string, from: number, to: number): Promise<Buffer> {
     const length = to - from;
     if (length <= 0) {
-      return '';
+      return Buffer.alloc(0);
     }
     const handle = await open(path, 'r');
     try {
       const buffer = Buffer.alloc(length);
       const { bytesRead } = await handle.read(buffer, 0, length, from);
-      return buffer.toString('utf-8', 0, bytesRead);
+      return buffer.subarray(0, bytesRead);
     } finally {
       await handle.close();
     }
@@ -203,7 +214,7 @@ export class LogTailer {
     }
     await mkdir(dirname(this.statePath), { recursive: true });
     // Se descuenta la linea parcial pendiente para que, tras un reinicio, se vuelva a leer entera.
-    const position = Math.max(0, this.state.position - Buffer.byteLength(this.partialLine, 'utf-8'));
+    const position = Math.max(0, this.state.position - this.partial.length);
     await writeFile(this.statePath, JSON.stringify({ ...this.state, position }), 'utf-8');
   }
 }

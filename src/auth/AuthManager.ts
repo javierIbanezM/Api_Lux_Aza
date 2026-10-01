@@ -24,6 +24,7 @@ export class AuthManager {
   private readonly http: AxiosInstance;
   private session: Session | undefined;
   private refreshInFlight: Promise<string> | undefined;
+  private loginInFlight: Promise<string> | undefined;
 
   constructor(
     private readonly config: AppConfig,
@@ -66,7 +67,7 @@ export class AuthManager {
     }
     try {
       return await this.refresh();
-    } catch (err) {
+    } catch {
       this.logger.warn('Refresh de token fallido, forzando nuevo login', {
         operacion: 'auth.refresh',
         resultado: 'ERROR',
@@ -76,7 +77,21 @@ export class AuthManager {
     }
   }
 
-  async login(): Promise<string> {
+  /**
+   * Login contra LUX. Igual que `refresh`, solo uno puede estar en curso a la vez: si llegan
+   * varias peticiones simultaneas sin sesion (arranque en frio, tras un fallo de refresh),
+   * comparten el mismo login en vez de lanzar uno por peticion.
+   */
+  login(): Promise<string> {
+    if (!this.loginInFlight) {
+      this.loginInFlight = this.doLogin().finally(() => {
+        this.loginInFlight = undefined;
+      });
+    }
+    return this.loginInFlight;
+  }
+
+  private async doLogin(): Promise<string> {
     try {
       const response = await this.http.post<LoginResponse>('/login', {
         username: this.config.luxUsername,

@@ -34,19 +34,35 @@ function parseSortableDate(value: string): number | null {
   return Number.isNaN(date.getTime()) ? null : date.getTime();
 }
 
-function compareValues(a: string, b: string): number {
-  if (a === '' && b === '') return 0;
-  if (a === '') return -1;
-  if (b === '') return 1;
-  const da = parseSortableDate(a);
-  const db = parseSortableDate(b);
-  if (da !== null && db !== null) {
-    return da - db;
-  }
-  return a.localeCompare(b, 'es', { numeric: true, sensitivity: 'base' });
+/** Collator compartido: `a.localeCompare(b, 'es', opts)` crea uno nuevo en cada comparacion, que
+ *  con miles de filas (4.160 recepciones reales) es el grueso del coste de ordenar. */
+const COLLATOR = new Intl.Collator('es', { numeric: true, sensitivity: 'base' });
+
+interface SortKey {
+  text: string;
+  /** Fecha parseada (ms) o null si el valor no tiene formato de fecha de LUX. */
+  date: number | null;
 }
 
-/** Ordena una copia de `rows` por `field` (clave de cada fila). Si `field` no viene, no reordena. */
+function toSortKey(value: string): SortKey {
+  return { text: value, date: value === '' ? null : parseSortableDate(value) };
+}
+
+function compareKeys(a: SortKey, b: SortKey): number {
+  if (a.text === '' && b.text === '') return 0;
+  if (a.text === '') return -1;
+  if (b.text === '') return 1;
+  if (a.date !== null && b.date !== null) {
+    return a.date - b.date;
+  }
+  return COLLATOR.compare(a.text, b.text);
+}
+
+/**
+ * Ordena una copia de `rows` por `field` (clave de cada fila). Si `field` no viene, no reordena.
+ * La clave de ordenacion de cada fila (texto + fecha parseada) se calcula UNA vez, no en cada
+ * comparacion (O(n) parseos en vez de O(n log n)).
+ */
 export function sortRows<T extends Record<string, string>>(
   rows: T[],
   field: string | undefined,
@@ -55,7 +71,9 @@ export function sortRows<T extends Record<string, string>>(
   if (!field) {
     return rows;
   }
-  const sorted = [...rows].sort((a, b) => compareValues(a[field] ?? '', b[field] ?? ''));
+  const decorated = rows.map((row) => ({ row, key: toSortKey(row[field] ?? '') }));
+  decorated.sort((x, y) => compareKeys(x.key, y.key));
+  const sorted = decorated.map((d) => d.row);
   return direction === 'desc' ? sorted.reverse() : sorted;
 }
 

@@ -1,0 +1,186 @@
+INFORME DE MEJORAS PENDIENTES - API WHALES AZA
+Fecha: 2026-10-01
+Detalle completo de la auditoria: docs/auditoria.md
+
+Todo lo de este fichero esta SIN aplicar. Los cambios ya aplicados (sin cambio funcional) estan
+al final, en "YA APLICADO".
+
+======================================================================
+PENDIENTE (ordenado por prioridad)
+======================================================================
+
+1. [ALTA] WATCHER: la posicion se guarda ANTES de procesar el evento
+   - Problema: LogTailer guarda hasta donde ha leido en cuanto lee las lineas, pero el refresco
+     (re-consulta a LUX + JSON) ocurre despues (debounce de 5 s + consulta). Si el proceso muere
+     o se reinicia en esa ventana, esa linea no se vuelve a leer y el evento se pierde.
+   - Solucion: confirmar (commit) la posicion solo cuando no haya refrescos pendientes ni en
+     curso. Tras un reinicio se releeria algo ya procesado; es seguro porque el refresco es
+     idempotente.
+   - Es lo mas importante para el requisito "no perder ningun evento".
+
+2. [ALTA] LUX devuelve lista vacia -> error 500 generico
+   - Problema: los servicios hacen "rows[0] as Expedicion" sin comprobar. Si LUX devuelve []
+     (id inexistente) se devuelve undefined y falla despues (p.ej. cabecera.pedido).
+   - Solucion: helper firstRowOrThrow con error tipado -> HTTP 404.
+   - OJO: cambia el codigo HTTP de 500 a 404. Acordar antes con los consumidores de la API.
+
+3. [MEDIA] Sin limite de concurrencia hacia LUX ni circuit breaker
+   - Cada detalle web = 5 llamadas a LUX; listar recepciones = 2; tras un corte el watcher
+     puede lanzar rafagas.
+   - Solucion: limitador de concurrencia en LuxClient (p.ej. 6-8 simultaneas) y un breaker
+     simple tras N fallos de red consecutivos.
+
+4. [MEDIA] Reintentos: lista de acciones de escritura fragil
+   - LuxClient.WRITE_ACTIONS = ACTUALIZAR/INSERT/UPDATE. Una accion de escritura nueva se
+     REINTENTARIA por defecto (riesgo de duplicar datos en LUX).
+   - Solucion: invertirlo. Reintentar solo acciones de lectura conocidas (SELECT*, select_*,
+     pedido_*).
+
+5. [MEDIA] Sesiones de la interfaz web en memoria (MemoryStore)
+   - Se pierden al reiniciar el proceso y no permiten varias instancias/workers.
+   - Solucion: store persistente (Redis, SQL Server...). Cambio localizado en src/web/session.ts.
+
+6. [MEDIA] Ficheros demasiado grandes / responsabilidades mezcladas
+   - src/watcher/luxActionWatcher.ts (430 lineas): tail, debounce, orquestacion, armado del
+     snapshot (expedicion y recepcion casi gemelos) y llamada al sink.
+     -> dividir en Debouncer + SnapshotBuilder de expedicion/recepcion + coordinador.
+   - src/web/webRouter.ts (310 lineas): login/logout, cambio de almacen y vistas; repite 4
+     veces el patron "intentar, si falla renderizar con error".
+     -> separar en web/controllers/{auth,expediciones,recepciones}.ts y un helper
+        renderConFallback. Acerca la parte web a un MVC real.
+
+7. [MEDIA] jsonFileSink lista la carpeta entera en cada evento
+   - readdir de data/watcher-events en cada evento: O(N) con miles de JSON.
+   - Solucion: indice en memoria sufijo -> ficheros (carga inicial unica).
+   - Es una pieza PROVISIONAL: se sustituira por DestinoPersistencia (base de datos).
+
+8. [MEDIA] Destino definitivo (base de datos) sin implementar
+   - Existe la interfaz DestinoPersistencia (src/watcher/watcherSink.ts) y la logica "borrar el
+     JSON solo tras confirmar la BD", pero no hay ninguna implementacion ni esta conectada en
+     scripts/watchLuxLogs.ts. Hoy, sin destino, ENVIADO/CERRADO borran el JSON directamente.
+   - Falta: definir BD, esquema y mapeo de campos.
+   - Si la BD falla, el JSON se conserva pero nada lo reintenta hasta que llegue otro evento de
+     ese pedido. Anadir un barrido al arrancar que reintente los JSON en estado final.
+
+9. [BAJA] Reglas de dominio repartidas
+   - Estados finales (ENVIADO, CERRADO) en jsonFileSink; tipos de evento en actionPatterns;
+     almacenes en lux/warehouses.
+   - Solucion: centralizar en un modulo domain/.
+
+10. [BAJA] Operacion y seguridad
+    - /health/ready no comprueba que LUX responda (solo la configuracion).
+    - No hay helmet ni rate-limit en /api.
+    - AuthManager y LuxClient crean cada uno su instancia de axios (factoria comun).
+    - Swagger (/docs) es publico por decision explicita.
+    - Quedan procesos "tsx watch" duplicados del servidor en la maquina (instancias de 9:36 y
+      15:46); dejar un unico servidor.
+
+======================================================================
+FASES PROPUESTAS
+======================================================================
+A (rapida, riesgo bajo): 4, 9, 10 y el indice del sink (7).
+B (robustez del watcher): 1 (checkpoint tras procesar) y 6 (dividir el watcher), con tests de
+  "muerte durante el debounce".
+C (contrato HTTP): 2 (404) acordado con los consumidores; 3 (limitador/breaker).
+D (web y destino): 6 (webRouter), 5 (sesiones) y 8 (BD).
+Regla: los 191 tests actuales deben seguir pasando sin tocar sus expectativas; solo cambian en
+la fase C, de forma explicita.
+
+======================================================================
+YA APLICADO (sin cambio funcional)
+======================================================================
+- Helpers duplicados de los dos servicios extraidos a src/services/shared.ts.
+- obtenerDetalle() en ExpedicionesService y RecepcionesService; los controladores y la web ya
+  no ensamblan el detalle a mano (eran 4 copias).
+- listarRecepciones: las 2 llamadas a LUX en paralelo (antes en serie).
+- Watcher: lineas y contenedores/HUs en paralelo (cada una sigue siendo "mejor esfuerzo").
+- AuthManager.login(): un solo login compartido si llegan varias peticiones sin sesion.
+- CatalogosService: una sola carga compartida si hay varias peticiones con la cache vacia.
+- LuxClient: campos de log comunes en un unico objeto.
+- LogTailer: ya no corrompe caracteres con acento partidos entre dos lecturas.
+- Servidor HTTP: cierre ordenado con SIGTERM/SIGINT.
+- Watcher: los refrescos del mismo pedido se ejecutan en orden (el antiguo no pisa al nuevo).
+- Anteriores a la auditoria: recuperacion tras corte/rotacion (lux.log.0 y lux.log.1), borrado
+  del JSON de preavisos en CERRADO, campo terminal en los JSON.
+
+======================================================================
+RENDIMIENTO (medido el 2026-10-01 contra LUX real, almacen por defecto)
+======================================================================
+MEDIDAS
+- Listado de recepciones sin filtro: 4,7 s y 3,6 MB (4.160 filas; 4.018+ son CERRADO).
+- Listado de expediciones sin filtro: 0,6 s y 0,6 MB (398 filas).
+- Login a LUX: ~0,1 s. Re-consulta del watcher por evento: ~0,4 s.
+- Latencia evento->JSON (~7-8 s): 5 s de debounce + 0-3 s de sondeo + 0,4 s de consulta.
+
+APLICADO
+- Ordenacion de los listados web (src/web/sorting.ts): 206 ms -> 8 ms al ordenar 4.160
+  recepciones por albaran (25x). Clave de ordenacion calculada una vez por fila y un unico
+  Intl.Collator compartido. Verificado: resultado IDENTICO al anterior en 22 ordenaciones sobre
+  datos reales; 191 tests en verde.
+
+PENDIENTE (por impacto)
+R1. [ALTA] /almacen/recepciones y GET /api/recepciones sin paginacion: cada visita descarga 3,6 MB
+    de LUX (4,7 s), los ordena y renderiza 4.160 filas de HTML. Opciones (cambian el
+    comportamiento visible, hay que decidirlo):
+      a) paginar en servidor (p.ej. 100 filas/pagina) y ordenar/paginar tras una unica carga;
+      b) en la web, no incluir CERRADO por defecto (97% de las filas) salvo filtro explicito;
+      c) cache corta (30-60 s) de la lista, con la salvedad de que una recepcion recien cerrada
+         puede tardar ese tiempo en aparecer en la lista de cerradas.
+R2. [MEDIA] Compresion HTTP: no hay compresion en /api ni /almacen. El JSON/HTML de listados
+    comprime ~10x. Anadir el middleware "compression" (dependencia nueva).
+R3. [MEDIA] Memoria: LogTailer carga en un unico Buffer todo lo pendiente (hasta 10 MB por log, 20
+    MB si hay rotacion en el corte, mas copias al concatenar). Procesar en trozos de ~1 MB.
+R4. [MEDIA] Sesiones web en MemoryStore: express-session no purga las expiradas hasta acceder
+    a ellas (fuga de memoria por diseno, acotada por el numero de logins). Mover a un store
+    con caducidad (p.ej. sobre el SQLite ya existente).
+R5. [BAJA] Watcher: cabecera, lineas y contenedores se podrian pedir en paralelo (2 etapas en
+    vez de 3). Ahorro ~0,1 s de ~7 s: irrelevante frente al debounce/sondeo.
+R6. [BAJA] Latencia evento->JSON: la palanca real es configuracion, no codigo:
+    WATCHER_DEBOUNCE_MS (5000) y WATCHER_POLL_MS (3000). Bajarlos acelera a costa de mas
+    consultas a LUX / mas lecturas de la unidad de red.
+R7. [BAJA] Lectura de la huella en cada sondeo: abre cada log una vez mas por sondeo (red). Se
+    podria omitir cuando el tamano no cambia (coste: no detectar una rotacion a un fichero de
+    tamano identico, practicamente imposible).
+R8. [BAJA] jsonFileSink: readdir de la carpeta por evento (ver punto 7 de arriba).
+
+======================================================================
+INCIDENCIA RUTA 14586 (2026-10-01 18:56) - ANALISIS Y NOTAS
+======================================================================
+- Hecho: ENVIAR_FORZAR de la ruta 14586 (RT00013478_2026_GRUP MASPERTRANS, modoRuta=PEDIDOS).
+  El watcher la detecto en 2 s, pero p_expRutasDetalle devolvio 0 filas -> no habia pedidos que
+  re-consultar y solo quedo un warn (watcher.rutaSinPedidos); no se genero ningun JSON.
+- Causa raiz: la ruta estaba VACIA en LUX al enviarla. En el log de LUX no hay ninguna
+  asignacion de pedidos a la ruta 14586 (solo UPDATE 18:53:55, ENVIAR y ENVIAR_FORZAR), y
+  ningun pedido del listado de expediciones tiene esa ruta. Se comprobo contra LUX en dos
+  momentos distintos (18:56:37 y 18:58:12): sigue en 0. Las rutas 14668 (8 pedidos) y 14669
+  (1 pedido), tambien modoRuta=PEDIDOS, si resuelven bien: no es un fallo de la resolucion.
+- Solucion aplicada: una ruta enviada sin pedidos ya no se pierde en silencio. El sink recibe
+  onRutaEnviadaSinPedidos y jsonFileSink guarda data/watcher-events/<fecha>--ruta-<id>.json con
+  {idRuta, almacen, terminal, detectadoEn, pedidos: []} (uno por ruta, el mas reciente). El
+  warn se mantiene. Tests nuevos (watcher + sink); 193 en verde.
+- Pendiente de confirmar con operaciones: si enviar rutas vacias es habitual o un error de uso;
+  si lo es, convendria avisar/alertar en lugar de solo registrarlo.
+- Pendiente: estos JSON de ruta no tienen estado final, por lo que no se borran solos.
+  Decidir si se purgan (p.ej. a los N dias) o se vuelcan a la BD como el resto.
+
+OTRAS NOTAS DE ESTA SESION
+- El monitor de eventos del watcher caduco sin eventos de expedicion/recepcion tras el
+  reinicio de las 18:52; la escritura de JSON con el codigo nuevo esta cubierta por tests pero
+  falta confirmarla con un evento real.
+- Reiniciar el watcher dentro de la ventana de debounce (5 s) puede perder el evento en curso
+  (ver punto 1 de PENDIENTE). Reiniciar en momentos tranquilos mientras no se corrija.
+- El servidor HTTP en marcha (puerto 3000) no tiene aun la optimizacion de ordenacion ni los
+  cambios de la auditoria hasta que se reinicie.
+- Hay mas de un proceso "tsx watch" del servidor (instancias de 9:36 y 15:46); dejar uno solo.
+
+======================================================================
+PENDIENTE AÑADIDO (2026-10-01, tras la incidencia de la ruta 14586)
+======================================================================
+P-RUTA-14586. Registrar a mano el evento de la ruta 14586 (enviada 18:56:35, detectada por el
+    watcher a las 18:56:37, hora local). El arreglo del watcher solo cubre rutas vacias
+    FUTURAS; el watcher ya habia pasado esa linea del log, asi que esa ruta no tiene JSON.
+    Accion: crear data/watcher-events/<fecha>--ruta-14586.json con
+    {idRuta:"14586", almacen:"SAGUNTO", pedidos:[], detectadoEn:"2026-10-01T16:56:37Z"}
+    (usuario que la envio segun el log de LUX: JCRedolarS; ruta RT00013478_2026_GRUP MASPERTRANS,
+    modoRuta=PEDIDOS, sin pedidos asignados en LUX).
+    Estado: SIN HACER, pendiente de que se confirme que se quiere.

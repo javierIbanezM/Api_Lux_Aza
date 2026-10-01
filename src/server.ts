@@ -23,7 +23,7 @@ function bootstrap(): void {
   const deps = buildDependencies(config, logger);
   const app = createApp(config, logger, deps);
 
-  app.listen(config.port, () => {
+  const server = app.listen(config.port, () => {
     logger.info('Servidor AZA <-> LUX iniciado', {
       operacion: 'server.start',
       resultado: 'OK',
@@ -31,6 +31,16 @@ function bootstrap(): void {
     // eslint-disable-next-line no-console
     console.log(`API WHALES AZA escuchando en http://localhost:${config.port}`);
   });
+
+  // Cierre ordenado (orquestador/PM2/Ctrl+C): deja de aceptar conexiones y espera a las
+  // peticiones en curso antes de salir.
+  const shutdown = (signal: string): void => {
+    logger.info('Servidor AZA <-> LUX detenido', { operacion: 'server.stop', resultado: 'OK', signal });
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 10_000).unref();
+  };
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 bootstrap();

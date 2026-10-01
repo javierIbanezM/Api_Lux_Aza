@@ -18,6 +18,9 @@ interface CacheEntry<T> {
  */
 export class CatalogosService {
   private readonly cache = new Map<string, CacheEntry<Record<string, string>[]>>();
+  /** Cargas en curso por clave: varias peticiones simultaneas con la cache vacia/expirada
+   *  comparten una sola llamada a LUX en vez de lanzar una cada una. */
+  private readonly inFlight = new Map<string, Promise<Record<string, string>[]>>();
 
   constructor(
     private readonly luxClient: LuxClient,
@@ -39,9 +42,20 @@ export class CatalogosService {
     if (cached && cached.expiresAtMs > now) {
       return cached.value;
     }
-    const value = await loader();
-    this.cache.set(cacheKey, { value, expiresAtMs: now + this.ttlMs });
-    return value;
+    const pending = this.inFlight.get(cacheKey);
+    if (pending) {
+      return pending;
+    }
+    const load = loader()
+      .then((value) => {
+        this.cache.set(cacheKey, { value, expiresAtMs: now + this.ttlMs });
+        return value;
+      })
+      .finally(() => {
+        this.inFlight.delete(cacheKey);
+      });
+    this.inFlight.set(cacheKey, load);
+    return load;
   }
 
   /** Invalida toda la cache de catalogos (util tras cambios conocidos en Whales o en tests). */

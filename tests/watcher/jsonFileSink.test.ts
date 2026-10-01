@@ -275,3 +275,24 @@ describe('watcher/jsonFileSink estados finales y destino', () => {
     expect(JSON.parse(readFileSync(join(dir, ficheros[0] as string), 'utf-8')).estado).toBe('CERRADO');
   });
 });
+
+describe('watcher/jsonFileSink ruta enviada sin pedidos', () => {
+  it('guarda un JSON por ruta y reemplaza el anterior de la misma ruta', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    try {
+      const sink = createJsonFileSink(dir, createLogger('error'));
+      const base = { idRuta: '14586', almacen: 'SAGUNTO', terminal: 'abc', pedidos: [] as string[] };
+      await sink.onRutaEnviadaSinPedidos?.({ ...base, detectadoEn: '2026-10-01T16:56:37.000Z' });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await sink.onRutaEnviadaSinPedidos?.({ ...base, detectadoEn: '2026-10-01T16:57:00.000Z' });
+
+      const ficheros = readdirSync(dir);
+      expect(ficheros).toHaveLength(1);
+      expect(ficheros[0]).toMatch(/--ruta-14586\.json$/);
+      const contenido = JSON.parse(readFileSync(join(dir, ficheros[0] as string), 'utf-8'));
+      expect(contenido).toMatchObject({ idRuta: '14586', pedidos: [], detectadoEn: '2026-10-01T16:57:00.000Z' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

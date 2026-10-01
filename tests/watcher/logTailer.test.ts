@@ -168,3 +168,27 @@ describe('watcher/LogTailer con estado persistente (corte y rotacion)', () => {
     expect(received).toEqual(['linea a medias']);
   });
 });
+
+describe('watcher/LogTailer caracteres multibyte', () => {
+  it('no corrompe un caracter UTF-8 partido entre dos lecturas', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lux-log-tailer-utf8-'));
+    const file = join(dir, 'lux.log.0');
+    try {
+      writeFileSync(file, 'cabecera\n');
+      const received: string[] = [];
+      const tailer = new LogTailer(file, (l) => received.push(...l), () => {});
+      await tailer.poll(); // baseline
+
+      const bytes = Buffer.from('almacén central\n', 'utf-8');
+      const corte = bytes.indexOf(0xc3) + 1; // mitad de la "é" (2 bytes)
+      appendFileSync(file, bytes.subarray(0, corte));
+      await tailer.poll();
+      appendFileSync(file, bytes.subarray(corte));
+      await tailer.poll();
+
+      expect(received).toEqual(['almacén central']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

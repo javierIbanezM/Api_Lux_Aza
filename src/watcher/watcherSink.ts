@@ -59,6 +59,20 @@ export interface AlbaranActualizado {
   hus: RecepcionHU[];
 }
 
+/** Envio de una ruta de transporte (`p_expRutas` ENVIAR_FORZAR) que NO se pudo resolver a ningun
+ *  pedido: en LUX la ruta estaba vacia (sin lineas en `p_expRutasDetalle`) al enviarla. Se
+ *  registra igualmente para que el evento no se pierda en silencio. */
+export interface RutaEnviadaSinPedidos {
+  idRuta: string;
+  almacen?: string;
+  /** Terminal (PDA) de la linea de log, si la traia. */
+  terminal?: string;
+  /** Momento (ISO) en que el watcher detecto el envio. */
+  detectadoEn: string;
+  /** Siempre vacio: es el motivo de este registro. */
+  pedidos: string[];
+}
+
 /**
  * Punto de extension para el paso 3 del flujo (evento detectado -> llamada API completa -> persistir
  * en destino AZA). El watcher llama a esto SOLO despues de re-consultar con exito el estado actual
@@ -79,6 +93,7 @@ export interface AlbaranActualizado {
 export interface WatcherSink {
   onExpedicionActualizada?(result: ExpedicionActualizada): Promise<void> | void;
   onAlbaranActualizado?(result: AlbaranActualizado): Promise<void> | void;
+  onRutaEnviadaSinPedidos?(result: RutaEnviadaSinPedidos): Promise<void> | void;
 }
 
 /**

@@ -88,6 +88,15 @@ export class LuxClient {
     const isWrite = WRITE_ACTIONS.has(accion);
     const attemptsAllowed = isWrite ? 1 : this.maxRetries + 1;
 
+    // Campos comunes a todos los logs de esta llamada.
+    const logBase = {
+      operacion: options.operacion,
+      procedimiento,
+      accion,
+      almacen,
+      correlationId: options.correlationId,
+    };
+
     let lastError: Error | undefined;
     for (let attempt = 1; attempt <= attemptsAllowed; attempt += 1) {
       const startedAt = Date.now();
@@ -107,15 +116,11 @@ export class LuxClient {
 
         if (first && typeof first.mensaje === 'string' && first.mensaje !== 'OK') {
           this.logger.info('Llamada LUX con error funcional', {
-            operacion: options.operacion,
-            procedimiento,
-            accion,
-            almacen,
+            ...logBase,
             resultado: 'ERROR',
             duracionMs,
             httpStatus: response.status,
             mensajeLux: first.mensaje,
-            correlationId: options.correlationId,
             idPedido: first.idPedido,
             idAlbaran: first.idAlbaran,
           });
@@ -123,15 +128,11 @@ export class LuxClient {
         }
 
         this.logger.info('Llamada LUX correcta', {
-          operacion: options.operacion,
-          procedimiento,
-          accion,
-          almacen,
+          ...logBase,
           resultado: 'OK',
           duracionMs,
           httpStatus: response.status,
           mensajeLux: first?.mensaje,
-          correlationId: options.correlationId,
           idPedido: first?.idPedido,
           idAlbaran: first?.idAlbaran,
         });
@@ -151,14 +152,10 @@ export class LuxClient {
           (translated instanceof LuxHttpError && translated.isTransient);
 
         this.logger.warn('Llamada LUX fallida', {
-          operacion: options.operacion,
-          procedimiento,
-          accion,
-          almacen,
+          ...logBase,
           resultado: 'ERROR',
           duracionMs,
           httpStatus: translated instanceof LuxHttpError ? translated.status : undefined,
-          correlationId: options.correlationId,
           attempt,
           isTransient,
           willRetry: isTransient && !isWrite && attempt < attemptsAllowed,

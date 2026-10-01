@@ -192,16 +192,9 @@ export function createWebRouter(deps: WebRouterDependencies): Router {
     const idPedido = req.params.idPedido as string;
     const almacen = req.session.almacen ?? defaultAlmacen;
 
-    Promise.all([
-      expedicionesService.obtenerExpedicion(idPedido, almacen),
-      expedicionesService.obtenerDatosExtraExpedicion(idPedido, almacen),
-      expedicionesService.obtenerLineasExpedicion(idPedido, almacen),
-      expedicionesService.obtenerContenedoresExpedicion(idPedido, almacen),
-    ])
-      .then(async ([cabecera, datosExtra, lineas, contenedores]) => {
-        // Fila completa del visor (p_expedicionesAza): columnas que no trae p_expCabeceraAza
-        // (transportista, ruta, muelle, prioridad, etc.), ver docs/lux-api-analysis.md §6.3.
-        const resumenListado = await expedicionesService.obtenerResumenListadoExpedicion(cabecera.pedido, almacen);
+    expedicionesService
+      .obtenerDetalle(idPedido, almacen)
+      .then(({ cabecera, datosExtra, lineas, contenedores, resumenListado }) => {
         renderPage(req, res, next, 'expedicionDetail', {
           title: `Expedicion ${idPedido}`,
           idPedido,
@@ -266,12 +259,9 @@ export function createWebRouter(deps: WebRouterDependencies): Router {
     const idAlbaran = req.params.idAlbaran as string;
     const almacen = req.session.almacen ?? defaultAlmacen;
 
-    Promise.all([
-      recepcionesService.obtenerRecepcion(idAlbaran, almacen),
-      recepcionesService.obtenerDatosExtraRecepcion(idAlbaran, almacen),
-      recepcionesService.obtenerLineasRecepcion(idAlbaran, almacen),
-    ])
-      .then(async ([cabecera, datosExtra, lineas]) => {
+    recepcionesService
+      .obtenerDetalle(idAlbaran, almacen)
+      .then(async ({ cabecera, datosExtra, lineas }) => {
         // Zonas de descarga validas para el propietario de esta recepcion (p_recCabeceraAza,
         // accion=SELECT_DESCARGAS). No documentado en el PDF; confirmado por ejemplo real de
         // uso, ver docs/lux-api-analysis.md §15.

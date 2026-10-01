@@ -1,6 +1,6 @@
 import type { LuxClient } from '../../lux/client';
 import { buildProcBody } from '../../lux/utils';
-import { LuxError, LuxValidationError } from '../../lux/errors';
+import { describeError, parseOrThrow, type LineaFallida } from '../shared';
 import type {
   Expedicion,
   ExpedicionContenedor,
@@ -21,9 +21,17 @@ import {
   type ListarExpedicionesFiltersDTO,
 } from '../../validation/expediciones';
 
-export interface LineaFallida<TInput> {
-  input: TInput;
-  error: string;
+export type { LineaFallida };
+
+/** Vista completa de una expedicion: lo que necesitan la API, la interfaz web y el watcher. */
+export interface ExpedicionDetalle {
+  cabecera: Expedicion;
+  datosExtra: Record<string, string>;
+  lineas: ExpedicionLinea[];
+  contenedores: ExpedicionContenedor[];
+  /** Fila completa del visor (p_expedicionesAza): columnas que no trae p_expCabeceraAza
+   *  (transportista, ruta, muelle, prioridad, etc.), ver docs/lux-api-analysis.md §6.3. */
+  resumenListado: ExpedicionListItem | undefined;
 }
 
 export interface CrearExpedicionResult {
@@ -35,14 +43,6 @@ export interface CrearExpedicionResult {
     ok: ExpedicionLinea[];
     fallidas: LineaFallida<LineaExpedicionDTO>[];
   };
-}
-
-function parseOrThrow<T>(schema: { safeParse: (v: unknown) => { success: boolean; data?: T; error?: unknown } }, input: unknown): T {
-  const result = schema.safeParse(input);
-  if (!result.success) {
-    throw new LuxValidationError('Datos de entrada invalidos', result.error);
-  }
-  return result.data as T;
 }
 
 /**
@@ -92,7 +92,7 @@ export class ExpedicionesService {
           });
           ok.push(lineaRows[0] as ExpedicionLinea);
         } catch (err) {
-          fallidas.push({ input: rawLinea as LineaExpedicionDTO, error: this.describeError(err) });
+          fallidas.push({ input: rawLinea as LineaExpedicionDTO, error: describeError(err) });
         }
       }
     }
@@ -154,6 +154,19 @@ export class ExpedicionesService {
       { operacion: 'expediciones.obtenerExpedicion', almacen },
     );
     return rows[0] as Expedicion;
+  }
+
+  /** Cabecera + datos extra + lineas + contenedores en paralelo y, despues, la fila del visor
+   *  (que necesita `cabecera.pedido`). Unico punto que ensambla el detalle de una expedicion. */
+  async obtenerDetalle(idPedido: string, almacen?: string): Promise<ExpedicionDetalle> {
+    const [cabecera, datosExtra, lineas, contenedores] = await Promise.all([
+      this.obtenerExpedicion(idPedido, almacen),
+      this.obtenerDatosExtraExpedicion(idPedido, almacen),
+      this.obtenerLineasExpedicion(idPedido, almacen),
+      this.obtenerContenedoresExpedicion(idPedido, almacen),
+    ]);
+    const resumenListado = await this.obtenerResumenListadoExpedicion(cabecera.pedido, almacen);
+    return { cabecera, datosExtra, lineas, contenedores, resumenListado };
   }
 
   async obtenerDatosExtraExpedicion(idPedido: string, almacen?: string): Promise<Record<string, string>> {
@@ -227,12 +240,5 @@ export class ExpedicionesService {
       { operacion: 'expediciones.obtenerContenedoresExpedicion', almacen },
     );
     return rows as ExpedicionContenedor[];
-  }
-
-  private describeError(err: unknown): string {
-    if (err instanceof LuxError) {
-      return err.message;
-    }
-    return err instanceof Error ? err.message : String(err);
   }
 }

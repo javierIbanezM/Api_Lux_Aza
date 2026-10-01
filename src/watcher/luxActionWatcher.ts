@@ -190,6 +190,18 @@ export class LuxActionWatcher {
           resultado: 'ERROR',
           idRuta: event.idRuta,
         });
+        // Aun sin pedidos, el envio queda registrado (la ruta estaba vacia en LUX al enviarla).
+        await this.callSink(
+          () =>
+            this.sink.onRutaEnviadaSinPedidos?.({
+              idRuta: event.idRuta as string,
+              almacen: event.almacen,
+              terminal: event.terminal,
+              detectadoEn: new Date().toISOString(),
+              pedidos: [],
+            }),
+          'ruta',
+        );
         return;
       }
       for (const idPedido of pedidos) {
@@ -302,7 +314,7 @@ export class LuxActionWatcher {
 
   /** Invoca el sink de persistencia (paso 3: guardar en destino AZA) sin dejar que un fallo ahi
    *  se confunda con un fallo de la re-consulta a LUX (que ya se registro por separado, arriba). */
-  private async callSink(fn: () => Promise<void> | void, dominio: 'expedicion' | 'recepcion'): Promise<void> {
+  private async callSink(fn: () => Promise<void> | void, dominio: 'expedicion' | 'recepcion' | 'ruta'): Promise<void> {
     try {
       await fn();
     } catch (err) {
@@ -362,10 +374,13 @@ export class LuxActionWatcher {
       if (!cabecera) {
         cabecera = await this.fetchBestEffort(() => this.expedicionesService.obtenerExpedicion(idPedido, almacen), 'cabecera');
       }
-      lineas = (await this.fetchBestEffort(() => this.expedicionesService.obtenerLineasExpedicion(idPedido, almacen), 'lineas')) ?? [];
-      contenedores =
-        (await this.fetchBestEffort(() => this.expedicionesService.obtenerContenedoresExpedicion(idPedido, almacen), 'contenedores')) ??
-        [];
+      // Independientes entre si: en paralelo (antes, una tras otra).
+      const [lineasRes, contenedoresRes] = await Promise.all([
+        this.fetchBestEffort(() => this.expedicionesService.obtenerLineasExpedicion(idPedido, almacen), 'lineas'),
+        this.fetchBestEffort(() => this.expedicionesService.obtenerContenedoresExpedicion(idPedido, almacen), 'contenedores'),
+      ]);
+      lineas = lineasRes ?? [];
+      contenedores = contenedoresRes ?? [];
     }
 
     return {
@@ -409,8 +424,12 @@ export class LuxActionWatcher {
       if (!cabecera) {
         cabecera = await this.fetchBestEffort(() => this.recepcionesService.obtenerRecepcion(idAlbaran, almacen), 'cabecera');
       }
-      lineas = (await this.fetchBestEffort(() => this.recepcionesService.obtenerLineasRecepcion(idAlbaran, almacen), 'lineas')) ?? [];
-      hus = (await this.fetchBestEffort(() => this.recepcionesService.obtenerHUsRecepcion(idAlbaran, almacen), 'hus')) ?? [];
+      const [lineasRes, husRes] = await Promise.all([
+        this.fetchBestEffort(() => this.recepcionesService.obtenerLineasRecepcion(idAlbaran, almacen), 'lineas'),
+        this.fetchBestEffort(() => this.recepcionesService.obtenerHUsRecepcion(idAlbaran, almacen), 'hus'),
+      ]);
+      lineas = lineasRes ?? [];
+      hus = husRes ?? [];
     }
 
     return {

@@ -1,7 +1,13 @@
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Logger } from '../logging';
-import type { AlbaranActualizado, DestinoPersistencia, ExpedicionActualizada, WatcherSink } from './watcherSink';
+import type {
+  AlbaranActualizado,
+  DestinoPersistencia,
+  ExpedicionActualizada,
+  RutaEnviadaSinPedidos,
+  WatcherSink,
+} from './watcherSink';
 
 /** Estados finales de una expedicion: no se esperan mas cambios, asi que no tiene sentido seguir
  *  guardando/acumulando sus JSON de eventos (confirmado por el usuario: "en ese estado ya no hay
@@ -143,5 +149,11 @@ export function createJsonFileSink(dir: string, logger: Logger, destino?: Destin
         Boolean(result.estado && ESTADOS_FINALES_RECEPCION.has(result.estado)),
         () => (destino as DestinoPersistencia).guardarAlbaran(result),
       ),
+    // Ruta enviada sin pedidos en LUX: un JSON por ruta (el mas reciente), sin estado final.
+    onRutaEnviadaSinPedidos: async (result: RutaEnviadaSinPedidos) => {
+      const sufijo = `ruta-${sanitizar(result.idRuta)}`;
+      await borrarFicherosDe(sufijo);
+      await guardar(sufijo, result);
+    },
   };
 }

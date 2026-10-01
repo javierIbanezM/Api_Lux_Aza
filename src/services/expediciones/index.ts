@@ -1,2 +1,2 @@
 export { ExpedicionesService } from './ExpedicionesService';
-export type { CrearExpedicionResult, LineaFallida } from './ExpedicionesService';
+export type { CrearExpedicionResult, ExpedicionDetalle, LineaFallida } from './ExpedicionesService';

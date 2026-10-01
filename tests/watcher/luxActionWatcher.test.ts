@@ -620,6 +620,33 @@ describe('watcher/LuxActionWatcher', () => {
     expect(onExpedicionActualizada.mock.calls[0]?.[0]).toMatchObject({ idPedido: '11115', terminal: '0a3287f025a30edd' });
   });
 
+  it('registra en el sink una ruta enviada que en LUX no tiene ningun pedido (ruta vacia)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expRutasDetalle' && body.idParent === '14586') {
+          return { status: 200, body: [] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    const onRutaEnviadaSinPedidos = vi.fn();
+    await startAndWaitBaseline({ onRutaEnviadaSinPedidos });
+
+    appendFileSync(
+      luxLogPath,
+      "01-oct-2026 18:56:35 INFO:   [] exec p_expRutas @accion='ENVIAR_FORZAR',@almacen='SAGUNTO',@usuario='JCRedolarS',@id='14586'\n",
+    );
+
+    await waitUntil(() => onRutaEnviadaSinPedidos.mock.calls.length > 0);
+    expect(onRutaEnviadaSinPedidos.mock.calls[0]?.[0]).toMatchObject({
+      idRuta: '14586',
+      almacen: 'SAGUNTO',
+      pedidos: [],
+    });
+    expect(logLines.some((l) => l.operacion === 'watcher.rutaSinPedidos')).toBe(true);
+  });
+
   it('si el sink falla, el refresco ya registrado en el log no se ve afectado (se registra watcher.sinkError aparte)', async () => {
     mock.updateOptions({
       onProc: (proc, body) => {
