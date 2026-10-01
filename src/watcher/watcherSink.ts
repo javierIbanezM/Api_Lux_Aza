@@ -17,6 +17,8 @@ export interface ExpedicionActualizada {
    *  actividad de los 5 almacenes, asi que esto NO es el almacen por defecto de la configuracion,
    *  es el que llevaba la linea de log que disparo este evento. */
   almacen?: string;
+  /** Terminal (PDA) de la ultima linea de log que disparo el refresco (`@terminal=`), si la traia. */
+  terminal?: string;
   propietario?: string;
   estado?: string;
   motivos: ActionEventType[];
@@ -39,6 +41,8 @@ export interface AlbaranActualizado {
   albaran: string;
   /** Almacen real de este albaran (ver actionPatterns.ts), no el por defecto de la configuracion. */
   almacen?: string;
+  /** Terminal (PDA) de la ultima linea de log que disparo el refresco (`@terminal=`), si la traia. */
+  terminal?: string;
   propietario?: string;
   estado?: string;
   motivos: ActionEventType[];
@@ -75,6 +79,17 @@ export interface AlbaranActualizado {
 export interface WatcherSink {
   onExpedicionActualizada?(result: ExpedicionActualizada): Promise<void> | void;
   onAlbaranActualizado?(result: AlbaranActualizado): Promise<void> | void;
+}
+
+/**
+ * Destino definitivo (base de datos de AZA) al que se vuelca el estado FINAL de un pedido/albaran
+ * (expedicion `ENVIADO`, recepcion `CERRADO`). Cada metodo debe resolverse SOLO cuando el destino
+ * ha confirmado el guardado sin errores, y lanzar si algo falla: `createJsonFileSink` solo borra
+ * el JSON provisional tras esa confirmacion (ver jsonFileSink.ts).
+ */
+export interface DestinoPersistencia {
+  guardarExpedicion(result: ExpedicionActualizada): Promise<void>;
+  guardarAlbaran(result: AlbaranActualizado): Promise<void>;
 }
 
 export const noopWatcherSink: WatcherSink = {};

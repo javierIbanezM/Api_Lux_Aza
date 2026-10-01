@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AuthManager } from '../../src/auth';
@@ -40,12 +40,14 @@ describe('watcher/LuxActionWatcher', () => {
     luxMobileLogPath: '',
     pollIntervalMs: 20,
     debounceMs: 30,
+    stateDir: '',
     jsonEventsDir: '', // no usado en estos tests: LuxActionWatcher no conoce jsonFileSink, solo WatcherSink
   };
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'lux-watcher-'));
     luxLogPath = join(dir, 'lux.log.0');
+    config.stateDir = join(dir, 'state');
     mobileLogPath = join(dir, 'lux_mobile.log.0');
     writeFileSync(luxLogPath, '');
     writeFileSync(mobileLogPath, '');
@@ -72,7 +74,8 @@ describe('watcher/LuxActionWatcher', () => {
     watcher.stop();
     logSpy.mockRestore();
     await mock.close();
-    rmSync(dir, { recursive: true, force: true });
+    await new Promise((resolve) => setTimeout(resolve, 50)); // deja terminar un sondeo en vuelo (guarda estado en `dir`)
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   function buildWatcher(sink?: WatcherSink): LuxActionWatcher {
@@ -90,7 +93,10 @@ describe('watcher/LuxActionWatcher', () => {
   async function startAndWaitBaseline(sink?: WatcherSink): Promise<void> {
     watcher = buildWatcher(sink);
     watcher.start();
-    await new Promise((resolve) => setTimeout(resolve, config.pollIntervalMs + 10));
+    // La linea base queda fijada cuando el tailer guarda su estado inicial en disco.
+    await waitUntil(
+      () => existsSync(join(config.stateDir, 'lux.state.json')) && existsSync(join(config.stateDir, 'lux-mobile.state.json')),
+    );
   }
 
   it('detecta el cierre de picking (LUX_mobile) y re-consulta el pedido, agrupando lineas repetidas en una sola llamada', async () => {
@@ -587,6 +593,31 @@ describe('watcher/LuxActionWatcher', () => {
       lineas: [],
       contenedores: [],
     });
+  });
+
+  it('pasa al sink el terminal (PDA) de la linea de log que disparo el evento', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: '11115', pedido: 'EXP0000074' }] };
+        }
+        if (proc === 'p_expedicionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '11115', pedido: 'EXP0000074', propietario: 'AZA LOGISTICS SLU', estado: 'CERRADO' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    const onExpedicionActualizada = vi.fn();
+    await startAndWaitBaseline({ onExpedicionActualizada });
+
+    appendFileSync(
+      mobileLogPath,
+      "30-sep-2026 12:46:39 INFO:   [] exec p_wm_expSinConsolidar @estado='CERRAR',@valor='',@almacen='SAGUNTO',@usuario='JIbanezM',@valor2='326857',@terminal='0a3287f025a30edd',@identificador='11115'\n",
+    );
+
+    await waitUntil(() => onExpedicionActualizada.mock.calls.length > 0);
+    expect(onExpedicionActualizada.mock.calls[0]?.[0]).toMatchObject({ idPedido: '11115', terminal: '0a3287f025a30edd' });
   });
 
   it('si el sink falla, el refresco ya registrado en el log no se ve afectado (se registra watcher.sinkError aparte)', async () => {

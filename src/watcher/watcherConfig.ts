@@ -16,6 +16,9 @@ export interface WatcherConfig {
   /** Carpeta donde se guarda un JSON por evento (ver src/watcher/jsonFileSink.ts), solucion
    *  provisional mientras se define el destino definitivo (paso 3, ver watcherSink.ts). */
   jsonEventsDir: string;
+  /** Carpeta donde se guarda la posicion leida de cada log, para no perder eventos si el
+   *  servicio se corta o el log rota mientras tanto (ver logTailer.ts). */
+  stateDir: string;
 }
 
 class WatcherConfigError extends Error {
@@ -57,6 +60,7 @@ export function loadWatcherConfig(raw: NodeJS.ProcessEnv = process.env): Watcher
     pollIntervalMs: optionalInt('WATCHER_POLL_MS', raw, 3000),
     debounceMs: optionalInt('WATCHER_DEBOUNCE_MS', raw, 5000),
     jsonEventsDir: optionalString('WATCHER_JSON_DIR', raw, 'data/watcher-events'),
+    stateDir: optionalString('WATCHER_STATE_DIR', raw, 'data/watcher-state'),
   };
 }
 

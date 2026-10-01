@@ -1,12 +1,14 @@
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Logger } from '../logging';
-import type { AlbaranActualizado, ExpedicionActualizada, WatcherSink } from './watcherSink';
+import type { AlbaranActualizado, DestinoPersistencia, ExpedicionActualizada, WatcherSink } from './watcherSink';
 
 /** Estados finales de una expedicion: no se esperan mas cambios, asi que no tiene sentido seguir
  *  guardando/acumulando sus JSON de eventos (confirmado por el usuario: "en ese estado ya no hay
  *  cambios y ya no sirve"). */
 const ESTADOS_FINALES_EXPEDICION = new Set(['ENVIADO']);
+/** Igual para recepciones (preavisos): `CERRADO` es el estado final. */
+const ESTADOS_FINALES_RECEPCION = new Set(['CERRADO']);
 
 /** Timestamp para el nombre de fichero en hora LOCAL (no UTC): `toISOString()` da UTC, que en
  *  Espana (CEST, UTC+2 en verano) va 2h por detras del reloj de pared -- confuso al revisar los
@@ -34,10 +36,15 @@ function sanitizar(valor: string): string {
  *
  * Como mucho hay UN fichero por pedido/albaran: antes de guardar el nuevo se borra cualquier JSON
  * previo del mismo pedido/albaran (confirmado por el usuario: si se duplica, se queda el mas
- * actual). Cuando una expedicion llega a un estado final (ver `ESTADOS_FINALES_EXPEDICION`) no se
- * guarda ninguno nuevo: ya no va a haber mas cambios, asi que no aporta nada seguir teniendolo.
+ * actual). Cuando una expedicion (`ENVIADO`) o una recepcion (`CERRADO`) llega a su estado final
+ * ya no va a haber mas cambios, asi que se borran sus JSON y no se guarda ninguno nuevo.
+ *
+ * Si se pasa un `destino` (base de datos), el estado final se vuelca primero ahi y los JSON solo
+ * se borran cuando el destino confirma el guardado sin errores. Si falla, se conserva el JSON mas
+ * actual y se registra `watcher.jsonSink.destinoError`. Sin `destino` (situacion actual, mientras
+ * AZA no lo defina) el borrado es directo, como antes.
  */
-export function createJsonFileSink(dir: string, logger: Logger): WatcherSink {
+export function createJsonFileSink(dir: string, logger: Logger, destino?: DestinoPersistencia): WatcherSink {
   let dirListo: Promise<void> | undefined;
   const asegurarDir = (): Promise<void> => {
     if (!dirListo) {
@@ -87,19 +94,54 @@ export function createJsonFileSink(dir: string, logger: Logger): WatcherSink {
     });
   };
 
+  /** Guarda el JSON mas actual (descartando los previos) salvo que sea estado final; en ese
+   *  caso, con `destino`, los JSON solo se borran tras la confirmacion del destino. */
+  const procesar = async (
+    sufijo: string,
+    data: unknown,
+    esFinal: boolean,
+    persistir: () => Promise<void>,
+  ): Promise<void> => {
+    if (!esFinal) {
+      await borrarFicherosDe(sufijo); // si habia uno anterior de este mismo pedido/albaran, se descarta
+      await guardar(sufijo, data);
+      return;
+    }
+    if (!destino) {
+      await borrarFicherosDe(sufijo); // estado final sin destino definido: no dejamos ni el ultimo
+      return;
+    }
+    try {
+      await persistir();
+    } catch (err) {
+      // Sin confirmacion del destino no se borra nada: se deja el JSON mas actual.
+      logger.error('El destino no confirmo el guardado del estado final; se conserva el JSON', {
+        operacion: 'watcher.jsonSink.destinoError',
+        resultado: 'ERROR',
+        sufijo,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await borrarFicherosDe(sufijo);
+      await guardar(sufijo, data);
+      return;
+    }
+    await borrarFicherosDe(sufijo);
+  };
+
   return {
-    onExpedicionActualizada: async (result: ExpedicionActualizada) => {
-      const sufijo = `expedicion-${sanitizar(result.pedido)}`;
-      await borrarFicherosDe(sufijo); // si habia uno anterior de este mismo pedido, se descarta
-      if (result.estado && ESTADOS_FINALES_EXPEDICION.has(result.estado)) {
-        return; // estado final: no dejamos ni el ultimo, ya no aporta nada
-      }
-      await guardar(sufijo, result);
-    },
-    onAlbaranActualizado: async (result: AlbaranActualizado) => {
-      const sufijo = `recepcion-${sanitizar(result.albaran)}`;
-      await borrarFicherosDe(sufijo); // si habia uno anterior de este mismo albaran, se descarta
-      await guardar(sufijo, result);
-    },
+    onExpedicionActualizada: (result: ExpedicionActualizada) =>
+      procesar(
+        `expedicion-${sanitizar(result.pedido)}`,
+        result,
+        Boolean(result.estado && ESTADOS_FINALES_EXPEDICION.has(result.estado)),
+        () => (destino as DestinoPersistencia).guardarExpedicion(result),
+      ),
+    onAlbaranActualizado: (result: AlbaranActualizado) =>
+      procesar(
+        `recepcion-${sanitizar(result.albaran)}`,
+        result,
+        Boolean(result.estado && ESTADOS_FINALES_RECEPCION.has(result.estado)),
+        () => (destino as DestinoPersistencia).guardarAlbaran(result),
+      ),
   };
 }

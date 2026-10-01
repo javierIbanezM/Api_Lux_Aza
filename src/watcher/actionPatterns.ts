@@ -49,6 +49,9 @@ export interface DetectedEvent {
    *  sea de ese almacen por defecto. Confirmado contra el servidor real: SAGUNTO, ALMUSSAFES,
    *  CHESTECM, CHESTE y MONTAVERNER generan actividad en los mismos 2 ficheros de log. */
   almacen?: string;
+  /** Terminal (PDA) que origino la accion (`@terminal='0a3287f025a30edd'`), si la linea lo trae.
+   *  Las lineas de la oficina suelen no llevarlo. Se guarda en los JSON para uso futuro. */
+  terminal?: string;
   rawLine: string;
 }
 
@@ -279,7 +282,7 @@ export function matchActionLine(line: string): DetectedEvent | null {
     if (!event) {
       continue;
     }
-    return { ...event, almacen: extractParam(line, 'almacen') };
+    return { ...event, almacen: extractParam(line, 'almacen'), terminal: extractParam(line, 'terminal') };
   }
   return null;
 }

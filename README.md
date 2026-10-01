@@ -4,6 +4,29 @@ Integración de **AZA Logistics** con la API **LUX (Whales)**: autenticación, c
 resiliente hacia LUX y una API REST propia (`/api/expediciones`, `/api/recepciones`,
 `/api/catalogos`) que envuelve los procedimientos almacenados autorizados.
 
+## Comandos rapidos del watcher de logs (PowerShell, desde `C:\API.WHALES`)
+
+```powershell
+# Iniciar (dejar la terminal abierta; Ctrl+C lo para)
+npm run watch-logs
+
+# Parar (mata solo el proceso del watcher, nunca "todo node.exe")
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+  Where-Object { $_.CommandLine -like '*watchLuxLogs*' -or $_.CommandLine -like '*run watch-logs*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+# Comprobar si esta en marcha (no debe salir nada si esta parado)
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+  Where-Object { $_.CommandLine -like '*watchLuxLogs*' } | Select-Object ProcessId, CreationDate
+
+# Reiniciar = Parar (bloque de arriba) + Iniciar
+```
+
+El watcher NO se recarga solo: reinicialo tras cambiar codigo o `.env`. Guarda hasta donde ha
+leido cada log en `data/watcher-state/`, asi que al reiniciar (o tras un corte, o si LUX rota
+`lux.log.0` a `lux.log.1`) recupera los eventos que faltaban. Si borras esa carpeta, vuelve a
+empezar desde el final de los logs.
+
 ## Arrancar el servicio
 
 ```bash

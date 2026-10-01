@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { LogTailer } from '../../src/watcher/logTailer';
@@ -77,5 +77,94 @@ describe('watcher/LogTailer', () => {
 
     await expect(tailer.poll()).resolves.toBeUndefined();
     expect(errors).toHaveLength(1);
+  });
+});
+
+describe('watcher/LogTailer con estado persistente (corte y rotacion)', () => {
+  let dir: string;
+  let log0: string;
+  let log1: string;
+  let statePath: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'lux-log-tailer-state-'));
+    log0 = join(dir, 'lux.log.0');
+    log1 = join(dir, 'lux.log.1');
+    statePath = join(dir, 'state', 'lux.state.json');
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const make = (received: string[]) => new LogTailer(log0, (l) => received.push(...l), () => {}, statePath);
+
+  it('tras un reinicio sin rotacion, recupera lo escrito durante el corte', async () => {
+    writeFileSync(log0, 'cabecera\nvieja\n');
+    const first: string[] = [];
+    await make(first).poll(); // baseline + guarda estado
+    appendFileSync(log0, 'durante el corte\n');
+
+    const second: string[] = [];
+    const restarted = make(second);
+    await restarted.poll();
+    expect(second).toEqual(['durante el corte']);
+
+    appendFileSync(log0, 'nueva\n');
+    await restarted.poll();
+    expect(second).toEqual(['durante el corte', 'nueva']);
+  });
+
+  it('tras un reinicio con rotacion, lee el resto de lux.log.1 y despues lux.log.0', async () => {
+    writeFileSync(log0, 'cabecera A\nvieja\n');
+    await make([]).poll();
+    // Durante el corte: se escribe mas en A y rota (A pasa a lux.log.1, empieza B).
+    appendFileSync(log0, 'resto de A\n');
+    renameSync(log0, log1);
+    writeFileSync(log0, 'cabecera B\nprimera de B\n');
+
+    const received: string[] = [];
+    await make(received).poll();
+
+    expect(received).toEqual(['resto de A', 'cabecera B', 'primera de B']);
+  });
+
+  it('detecta la rotacion con el servicio en marcha sin perder el final del fichero viejo', async () => {
+    writeFileSync(log0, 'cabecera A\n');
+    const received: string[] = [];
+    const tailer = make(received);
+    await tailer.poll();
+    appendFileSync(log0, 'ultima de A\n');
+    renameSync(log0, log1);
+    writeFileSync(log0, 'cabecera B\nprimera de B\n');
+    await tailer.poll();
+
+    expect(received).toEqual(['ultima de A', 'cabecera B', 'primera de B']);
+  });
+
+  it('avisa y lee lux.log.0 entero si no encuentra el fichero previo en lux.log.1', async () => {
+    writeFileSync(log0, 'cabecera A\n');
+    await make([]).poll();
+    writeFileSync(log0, 'cabecera C\nlinea C\n'); // dos rotaciones: A ya no esta en .1
+
+    const received: string[] = [];
+    const errors: unknown[] = [];
+    await new LogTailer(log0, (l) => received.push(...l), (e) => errors.push(e), statePath).poll();
+
+    expect(received).toEqual(['cabecera C', 'linea C']);
+    expect(errors).toHaveLength(1);
+  });
+
+  it('una linea parcial pendiente al cortarse se completa tras el reinicio', async () => {
+    writeFileSync(log0, 'cabecera\n');
+    const t = make([]);
+    await t.poll();
+    appendFileSync(log0, 'linea a medi');
+    await t.poll();
+    appendFileSync(log0, 'as\n');
+
+    const received: string[] = [];
+    await make(received).poll();
+    expect(received).toEqual(['linea a medias']);
   });
 });

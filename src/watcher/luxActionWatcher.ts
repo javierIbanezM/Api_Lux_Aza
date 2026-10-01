@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import type { Logger } from '../logging';
 import type { ExpedicionesService } from '../services/expediciones';
 import type { RecepcionesService } from '../services/recepciones';
@@ -10,8 +11,8 @@ import type { WatcherConfig } from './watcherConfig';
 import { noopWatcherSink, type ExpedicionActualizada, type AlbaranActualizado, type WatcherSink } from './watcherSink';
 
 type PendingTarget =
-  | { domain: 'expedicion'; idPedido?: string; pedido?: string; almacen?: string }
-  | { domain: 'recepcion'; idAlbaran?: string; albaran?: string; almacen?: string };
+  | { domain: 'expedicion'; idPedido?: string; pedido?: string; almacen?: string; terminal?: string }
+  | { domain: 'recepcion'; idAlbaran?: string; albaran?: string; almacen?: string; terminal?: string };
 
 interface PendingRefresh {
   target: PendingTarget;
@@ -51,6 +52,7 @@ function mergeTarget(previous: PendingTarget, incoming: PendingTarget): PendingT
       idPedido: incoming.idPedido ?? previous.idPedido,
       pedido: incoming.pedido ?? previous.pedido,
       almacen: incoming.almacen ?? previous.almacen,
+      terminal: incoming.terminal ?? previous.terminal,
     };
   }
   if (previous.domain === 'recepcion' && incoming.domain === 'recepcion') {
@@ -59,6 +61,7 @@ function mergeTarget(previous: PendingTarget, incoming: PendingTarget): PendingT
       idAlbaran: incoming.idAlbaran ?? previous.idAlbaran,
       albaran: incoming.albaran ?? previous.albaran,
       almacen: incoming.almacen ?? previous.almacen,
+      terminal: incoming.terminal ?? previous.terminal,
     };
   }
   return incoming;
@@ -84,6 +87,9 @@ function mergeTarget(previous: PendingTarget, incoming: PendingTarget): PendingT
  */
 export class LuxActionWatcher {
   private readonly pending = new Map<string, PendingRefresh>();
+  /** Ultimo refresco en curso por pedido/albaran: los refrescos de una misma clave se ejecutan en
+   *  orden, para que un resultado mas antiguo (consulta lenta) nunca pise a uno mas reciente. */
+  private readonly inFlight = new Map<string, Promise<void>>();
   private readonly luxTailer: LogTailer;
   private readonly mobileTailer: LogTailer;
   private pollHandle: ReturnType<typeof setInterval> | undefined;
@@ -100,11 +106,13 @@ export class LuxActionWatcher {
       config.luxLogPath,
       (lines) => this.handleLines(lines),
       (err) => this.handleTailError(err, 'LUX', config.luxLogPath),
+      join(config.stateDir, 'lux.state.json'),
     );
     this.mobileTailer = new LogTailer(
       config.luxMobileLogPath,
       (lines) => this.handleLines(lines),
       (err) => this.handleTailError(err, 'LUX_mobile', config.luxMobileLogPath),
+      join(config.stateDir, 'lux-mobile.state.json'),
     );
   }
 
@@ -161,12 +169,12 @@ export class LuxActionWatcher {
 
       if (event.idAlbaran !== undefined || event.albaran !== undefined) {
         this.scheduleRefresh(
-          { domain: 'recepcion', idAlbaran: event.idAlbaran, albaran: event.albaran, almacen: event.almacen },
+          { domain: 'recepcion', idAlbaran: event.idAlbaran, albaran: event.albaran, almacen: event.almacen, terminal: event.terminal },
           event.type,
         );
       } else {
         this.scheduleRefresh(
-          { domain: 'expedicion', idPedido: event.idPedido, pedido: event.pedido, almacen: event.almacen },
+          { domain: 'expedicion', idPedido: event.idPedido, pedido: event.pedido, almacen: event.almacen, terminal: event.terminal },
           event.type,
         );
       }
@@ -185,7 +193,7 @@ export class LuxActionWatcher {
         return;
       }
       for (const idPedido of pedidos) {
-        this.scheduleRefresh({ domain: 'expedicion', idPedido, almacen: event.almacen }, 'rutaEnviada');
+        this.scheduleRefresh({ domain: 'expedicion', idPedido, almacen: event.almacen, terminal: event.terminal }, 'rutaEnviada');
       }
     } catch (err) {
       this.logger.error('No se pudo resolver los pedidos de la ruta enviada', {
@@ -220,12 +228,24 @@ export class LuxActionWatcher {
     this.pending.set(key, { target, motivos: new Set([motivo]), timer });
   }
 
-  private async refresh(key: string): Promise<void> {
+  private refresh(key: string): Promise<void> {
     const entry = this.pending.get(key);
     this.pending.delete(key);
     if (!entry) {
-      return;
+      return Promise.resolve();
     }
+    const previous = this.inFlight.get(key) ?? Promise.resolve();
+    const run = previous.then(() => this.runRefresh(entry));
+    this.inFlight.set(key, run);
+    void run.finally(() => {
+      if (this.inFlight.get(key) === run) {
+        this.inFlight.delete(key);
+      }
+    });
+    return run;
+  }
+
+  private async runRefresh(entry: PendingRefresh): Promise<void> {
     const motivosList = [...entry.motivos];
     const motivos = motivosList.join(',');
     const startedAt = Date.now();
@@ -247,7 +267,7 @@ export class LuxActionWatcher {
           duracionMs: Date.now() - startedAt,
         });
         await this.callSink(
-          () => this.sink.onExpedicionActualizada?.({ ...result, motivos: motivosList }),
+          () => this.sink.onExpedicionActualizada?.({ ...result, terminal: entry.target.terminal, motivos: motivosList }),
           'expedicion',
         );
       } else {
@@ -266,7 +286,7 @@ export class LuxActionWatcher {
           duracionMs: Date.now() - startedAt,
         });
         await this.callSink(
-          () => this.sink.onAlbaranActualizado?.({ ...result, motivos: motivosList }),
+          () => this.sink.onAlbaranActualizado?.({ ...result, terminal: entry.target.terminal, motivos: motivosList }),
           'recepcion',
         );
       }

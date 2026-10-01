@@ -209,3 +209,69 @@ describe('watcher/jsonFileSink', () => {
     ).resolves.toBeUndefined();
   });
 });
+
+describe('watcher/jsonFileSink estados finales y destino', () => {
+  let dir: string;
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const albaran = (estado: string): AlbaranActualizado => ({
+    idAlbaran: '7838',
+    albaran: 'REC0000068',
+    estado,
+    motivos: ['recepcionCerradaPicking'],
+    lineas: [],
+    hus: [],
+  });
+  const expedicion = (estado: string): ExpedicionActualizada => ({
+    idPedido: '1',
+    pedido: 'EXP1',
+    estado,
+    motivos: ['expedicionCabeceraActualizada'],
+    lineas: [],
+    contenedores: [],
+  });
+
+  it('recepcion CERRADO borra los JSON previos y no guarda uno nuevo (sin destino)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    const sink = createJsonFileSink(dir, createLogger('error'));
+    await sink.onAlbaranActualizado?.(albaran('PENDIENTE'));
+    expect(readdirSync(dir)).toHaveLength(1);
+    await sink.onAlbaranActualizado?.(albaran('CERRADO'));
+    expect(readdirSync(dir)).toHaveLength(0);
+  });
+
+  it('con destino, borra el JSON solo despues de que el destino confirme', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    const guardados: string[] = [];
+    const destino = {
+      guardarExpedicion: async (r: ExpedicionActualizada) => void guardados.push(`exp:${r.estado}`),
+      guardarAlbaran: async (r: AlbaranActualizado) => void guardados.push(`alb:${r.estado}`),
+    };
+    const sink = createJsonFileSink(dir, createLogger('error'), destino);
+    await sink.onAlbaranActualizado?.(albaran('PENDIENTE'));
+    await sink.onExpedicionActualizada?.(expedicion('ASIGNADO'));
+    expect(guardados).toEqual([]); // no final: el destino no interviene
+    await sink.onAlbaranActualizado?.(albaran('CERRADO'));
+    await sink.onExpedicionActualizada?.(expedicion('ENVIADO'));
+    expect(guardados).toEqual(['alb:CERRADO', 'exp:ENVIADO']);
+    expect(readdirSync(dir)).toHaveLength(0);
+  });
+
+  it('con destino que falla, conserva el JSON mas actual y no lanza', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    const destino = {
+      guardarExpedicion: async () => {
+        throw new Error('BD caida');
+      },
+      guardarAlbaran: async () => {
+        throw new Error('BD caida');
+      },
+    };
+    const sink = createJsonFileSink(dir, createLogger('error'), destino);
+    await sink.onAlbaranActualizado?.(albaran('PENDIENTE'));
+    await expect(sink.onAlbaranActualizado?.(albaran('CERRADO'))).resolves.toBeUndefined();
+    const ficheros = readdirSync(dir);
+    expect(ficheros).toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(dir, ficheros[0] as string), 'utf-8')).estado).toBe('CERRADO');
+  });
+});

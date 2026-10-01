@@ -6,14 +6,14 @@ describe('watcher/actionPatterns', () => {
     const line =
       "30-sep-2026 12:46:39 INFO:   [] exec p_wm_expSinConsolidar @estado='CERRAR',@valor='',@almacen='SAGUNTO',@usuario='JIbanezM',@valor2='326857',@terminal='900b9768d4eb624f',@identificador='11115'";
     const event = matchActionLine(line);
-    expect(event).toEqual({ type: 'expedicionCerradaPicking', idPedido: '11115', almacen: 'SAGUNTO', rawLine: line });
+    expect(event).toEqual({ type: 'expedicionCerradaPicking', idPedido: '11115', almacen: 'SAGUNTO', terminal: '900b9768d4eb624f', rawLine: line });
   });
 
   it('detecta el cierre fisico de una recepcion desde la PDA (p_wm_recepcionCerrar, caso real REC0000068)', () => {
     // Linea real confirmada (30-sep-2026 15:36:59, REC0000068, identificador='7838').
     const line =
       "30-sep-2026 15:36:59 INFO:   [] exec p_wm_recepcionCerrar @estado='CONFIRMAR_CERRAR',@valor='',@almacen='SAGUNTO',@usuario='ARodriguezSP',@valor2='326859',@terminal='94fdca19a3326f42',@identificador='7838'";
-    expect(matchActionLine(line)).toEqual({ type: 'recepcionCerradaPicking', idAlbaran: '7838', almacen: 'SAGUNTO', rawLine: line });
+    expect(matchActionLine(line)).toEqual({ type: 'recepcionCerradaPicking', idAlbaran: '7838', almacen: 'SAGUNTO', terminal: '94fdca19a3326f42', rawLine: line });
 
     // Pasos posteriores (captura de datos, no el cierre en si) no deben disparar nada.
     expect(
@@ -38,6 +38,7 @@ describe('watcher/actionPatterns', () => {
       type: 'recepcionLineaConfirmada',
       idAlbaran: '7838',
       almacen: 'SAGUNTO',
+      terminal: '94fdca19a3326f42',
       rawLine: confirmada,
     });
 
