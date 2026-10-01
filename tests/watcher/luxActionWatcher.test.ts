@@ -40,6 +40,8 @@ describe('watcher/LuxActionWatcher', () => {
     luxMobileLogPath: '',
     pollIntervalMs: 20,
     debounceMs: 30,
+    maxWaitMs: 500,
+    retryDelayMs: 60_000,
     stateDir: '',
     jsonEventsDir: '', // no usado en estos tests: LuxActionWatcher no conoce jsonFileSink, solo WatcherSink
   };
@@ -645,6 +647,97 @@ describe('watcher/LuxActionWatcher', () => {
       pedidos: [],
     });
     expect(logLines.some((l) => l.operacion === 'watcher.rutaSinPedidos')).toBe(true);
+  });
+
+  const respuestaPedido = (estado = 'CERRADO') => (proc: string, body: Record<string, string>) => {
+    if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+      return { status: 200, body: [{ mensaje: 'OK', idPedido: '11115', pedido: 'EXP0000074' }] };
+    }
+    if (proc === 'p_expedicionesAza' && body.accion === 'SELECT') {
+      return { status: 200, body: [{ id: '11115', pedido: 'EXP0000074', propietario: 'AZA LOGISTICS SLU', estado }] };
+    }
+    return { status: 404, body: { mensaje: 'no mockeado' } };
+  };
+  const lineaCierre = (n: number): string =>
+    `30-sep-2026 12:46:${String(n % 60).padStart(2, '0')} INFO:   [] exec p_expediciones @accion='CERRAR_OFICINA_FIN_FORZAR',@almacen='SAGUNTO',@usuario='JIbanezM',@id='11115'\n`;
+
+  it('con actividad continua refresca igualmente al llegar al tope maximo de espera (maxWaitMs)', async () => {
+    mock.updateOptions({ onProc: respuestaPedido() });
+    const originalDebounce = config.debounceMs;
+    const originalMaxWait = config.maxWaitMs;
+    config.debounceMs = 150; // cada linea (cada 40 ms) reinicia el debounce: sin tope nunca dispararia
+    config.maxWaitMs = 400;
+    try {
+      const onExpedicionActualizada = vi.fn();
+      await startAndWaitBaseline({ onExpedicionActualizada });
+
+      const inicio = Date.now();
+      let primerRefrescoMs = -1;
+      for (let i = 0; i < 40; i += 1) {
+        appendFileSync(luxLogPath, lineaCierre(i));
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        if (primerRefrescoMs < 0 && onExpedicionActualizada.mock.calls.length > 0) {
+          primerRefrescoMs = Date.now() - inicio;
+        }
+      }
+      await waitUntil(() => onExpedicionActualizada.mock.calls.length > 0);
+      const duracionActividad = 40 * 40;
+      // Refresco antes de que terminara la actividad continua (~1600 ms), y no antes del tope.
+      expect(primerRefrescoMs).toBeGreaterThan(0);
+      expect(primerRefrescoMs).toBeLessThan(duracionActividad - 200);
+    } finally {
+      config.debounceMs = originalDebounce;
+      config.maxWaitMs = originalMaxWait;
+    }
+  });
+
+  it('reintenta un refresco fallido por LUX caido (error transitorio) hasta que sale bien, sin perder el evento', async () => {
+    const originalRetry = config.retryDelayMs;
+    config.retryDelayMs = 40;
+    let luxCaido = true;
+    const ok = respuestaPedido();
+    mock.updateOptions({
+      onProc: (proc, body) => (luxCaido ? { status: 503, body: { mensaje: 'caido' } } : ok(proc, body)),
+    });
+    try {
+      const onExpedicionActualizada = vi.fn();
+      await startAndWaitBaseline({ onExpedicionActualizada });
+      appendFileSync(luxLogPath, lineaCierre(1));
+
+      await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.refreshError' && l.reintentara === true), 8000);
+      expect(onExpedicionActualizada).not.toHaveBeenCalled();
+
+      luxCaido = false; // LUX vuelve
+      await waitUntil(() => onExpedicionActualizada.mock.calls.length > 0, 8000);
+      expect(onExpedicionActualizada.mock.calls[0]?.[0]).toMatchObject({ idPedido: '11115', estado: 'CERRADO' });
+    } finally {
+      config.retryDelayMs = originalRetry;
+    }
+  });
+
+  it('no pierde un evento si el watcher se para antes de procesarlo: el siguiente arranque lo recupera', async () => {
+    mock.updateOptions({ onProc: respuestaPedido() });
+    const originalDebounce = config.debounceMs;
+    const originalMaxWait = config.maxWaitMs;
+    config.debounceMs = 600; // da tiempo a parar el primer watcher con el evento aun pendiente
+    config.maxWaitMs = 1500;
+    try {
+      const sinkA = vi.fn();
+      await startAndWaitBaseline({ onExpedicionActualizada: sinkA });
+      appendFileSync(luxLogPath, lineaCierre(1));
+      await new Promise((resolve) => setTimeout(resolve, 150)); // leida (sondeo 20 ms), pero en debounce
+      await watcher.stop(); // se para con el evento pendiente: NO debe confirmarse la posicion
+      expect(sinkA).not.toHaveBeenCalled();
+
+      const sinkB = vi.fn();
+      watcher = buildWatcher({ onExpedicionActualizada: sinkB });
+      watcher.start(); // reinicio: relee desde la ultima posicion confirmada
+      await waitUntil(() => sinkB.mock.calls.length > 0, 8000);
+      expect(sinkB.mock.calls[0]?.[0]).toMatchObject({ idPedido: '11115' });
+    } finally {
+      config.debounceMs = originalDebounce;
+      config.maxWaitMs = originalMaxWait;
+    }
   });
 
   it('si el sink falla, el refresco ya registrado en el log no se ve afectado (se registra watcher.sinkError aparte)', async () => {

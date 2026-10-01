@@ -192,3 +192,36 @@ describe('watcher/LogTailer caracteres multibyte', () => {
     }
   });
 });
+
+describe('watcher/LogTailer con commit manual', () => {
+  it('no persiste la posicion hasta commit(): un reinicio sin commit relee lo ya leido', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lux-log-tailer-manual-'));
+    const file = join(dir, 'lux.log.0');
+    const statePath = join(dir, 'state', 's.json');
+    try {
+      writeFileSync(file, 'cabecera\n');
+      const crear = (received: string[]) =>
+        new LogTailer(file, (l) => received.push(...l), () => {}, statePath, false);
+
+      const a: string[] = [];
+      const tailerA = crear(a);
+      await tailerA.poll(); // baseline (siempre se persiste)
+      appendFileSync(file, 'evento 1\n');
+      await tailerA.poll();
+      expect(a).toEqual(['evento 1']);
+
+      // "Reinicio" sin commit: la posicion confirmada sigue siendo la del baseline.
+      const b: string[] = [];
+      await crear(b).poll();
+      expect(b).toEqual(['evento 1']);
+
+      // Con commit, el siguiente arranque ya no lo relee.
+      await tailerA.commit();
+      const c: string[] = [];
+      await crear(c).poll();
+      expect(c).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

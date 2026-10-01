@@ -184,3 +184,240 @@ P-RUTA-14586. Registrar a mano el evento de la ruta 14586 (enviada 18:56:35, det
     (usuario que la envio segun el log de LUX: JCRedolarS; ruta RT00013478_2026_GRUP MASPERTRANS,
     modoRuta=PEDIDOS, sin pedidos asignados en LUX).
     Estado: SIN HACER, pendiente de que se confirme que se quiere.
+
+======================================================================
+AUDITORIA DE SEGURIDAD (2026-10-01) - SOLO ANALISIS, NADA APLICADO
+======================================================================
+Alcance: servidor HTTP (/api, /almacen, /docs, /health), AuthManager/LuxClient, watcher, scripts,
+configuracion, dependencias (npm audit) y permisos de ficheros de esta maquina.
+Gravedad: ALTA / MEDIA / BAJA / INFO. Cada punto: hallazgo -> escenario -> correccion.
+
+--- ALTA ----------------------------------------------------------------
+
+SEG-1 [ALTA] Contrasena de la API de LUX en claro en el log de LUX
+  Hallazgo: cada login nuestro queda en T:\TLSI\LUX\lux.log.0 como
+  "exec p_autenticar @accion='VALIDAR',@password='<clave en claro>',@usuario='apiUser'".
+  Escenario: cualquiera con lectura en esa unidad de red (o copia de los lux.log.*, hay ~30
+  ficheros historicos) obtiene la credencial tecnica y puede LEER y ESCRIBIR (ACTUALIZAR/INSERT/
+  UPDATE) en los 5 almacenes con nuestra misma identidad.
+  Ademas: esa clave aparecio en la salida de herramientas de ESTA sesion de trabajo.
+  Correccion: (1) ROTAR ya LUX_PASSWORD (pedir a Whales el cambio y actualizar .env);
+  (2) pedir a Whales que enmascaren @password en su log; (3) restringir el ACL de la unidad
+  T:\TLSI a las cuentas que de verdad la necesitan; (4) purgar/archivar los lux.log.* antiguos.
+  Nota: no es corregible desde nuestro codigo, el log lo escribe LUX.
+
+SEG-2 [ALTA] Permisos de la carpeta data/ demasiado abiertos
+  Hallazgo: icacls data -> "NT AUTHORITY\Usuarios autentificados: (I)(M)" (Modificar) heredado.
+  Escenario: cualquier usuario autenticado de la maquina puede (a) sustituir el hash de
+  data\web-users.sqlite3 y entrar como cualquier usuario de la interfaz web; (b) borrar o
+  falsificar JSON de data\watcher-events (con direcciones/telefonos/correos de clientes);
+  (c) editar data\watcher-state para hacer que el watcher relea o se salte eventos.
+  Correccion: icacls data /inheritance:r y conceder control total solo a la cuenta de servicio y
+  a Administradores. Revisar igual .env y la carpeta del proyecto. Ejecutar el servidor y el
+  watcher con una cuenta de servicio dedicada, no con un usuario interactivo.
+
+--- MEDIA ---------------------------------------------------------------
+
+SEG-3 [MEDIA] Sin limite de intentos (fuerza bruta / DoS por CPU)
+  Hallazgo: ni /almacen/login ni /api/* tienen rate-limit, bloqueo o retardo progresivo.
+  Escenario: diccionario contra /almacen/login (cada intento cuesta un bcrypt y nada lo frena);
+  o saturar CPU/LUX repitiendo peticiones caras (ver SEG-10).
+  Correccion: express-rate-limit (p.ej. 5 intentos/15 min por IP+usuario en login, y limite por
+  clave en /api), bloqueo temporal tras N fallos y log de intentos.
+
+SEG-4 [MEDIA] Enumeracion de usuarios por temporizacion
+  Hallazgo: verifyCredentials (src/web/users.ts) devuelve null SIN ejecutar bcrypt si el usuario
+  no existe (el comentario del codigo dice lo contrario). Usuario inexistente = respuesta
+  mucho mas rapida que contrasena incorrecta.
+  Correccion: ejecutar siempre bcrypt.compare contra un hash ficticio cuando no hay fila.
+
+SEG-5 [MEDIA] Transporte sin TLS y cookie 'secure' fragil
+  Hallazgo: la app escucha en HTTP. La cookie de sesion lleva secure solo si NODE_ENV=production
+  y no se configura 'trust proxy': detras de un proxy TLS (IIS/Nginx) Express creeria que la
+  conexion es HTTP y NO enviaria la cookie secure (o se desactivaria secure para que funcione).
+  Escenario: usuario/contrasena de /almacen y la cabecera X-Api-Key viajan en claro por la red.
+  Correccion: TLS en un proxy inverso, app.set('trust proxy', 1), HSTS, NODE_ENV=production,
+  cookie secure siempre.
+
+SEG-6 [MEDIA] Autorizacion gruesa
+  Hallazgo: una sola AZA_API_KEY compartida da lectura+escritura sobre los 5 almacenes, sin
+  rotacion, sin identidad por cliente y sin registrar QUIEN escribe. En la web, todo usuario
+  puede cambiar a cualquier almacen (/set-almacen) y ve todos los datos.
+  Correccion: una clave por consumidor con ambito (lectura/escritura) y caducidad, almacenes
+  permitidos por usuario web, y registrar el actor en cada escritura (auditoria).
+
+SEG-7 [MEDIA] Dependencias con vulnerabilidades conocidas
+  Hallazgo: npm audit --omit=dev -> 3 moderadas (qs: bypass de limite de arrays y DoS, via
+  express 4.22.2 / body-parser 1.20.x).
+  Correccion: npm audit fix (probar tests), fijar versiones con package-lock y revisar con
+  npm audit en CI.
+
+SEG-8 [MEDIA] Sin cabeceras de seguridad
+  Hallazgo: no hay helmet. Faltan CSP, X-Frame-Options (clickjacking en /almacen),
+  X-Content-Type-Options, Referrer-Policy; Express anuncia X-Powered-By. /docs (Swagger) es
+  publico y describe toda la superficie de /api.
+  Correccion: helmet + app.disable('x-powered-by'); proteger /docs con la misma clave o
+  desactivarlo en produccion.
+
+SEG-9 [MEDIA] Redireccion abierta en /almacen/set-almacen
+  Hallazgo: se valida solo el PATHNAME del Referer (startsWith('/almacen')) pero se redirige
+  a la URL COMPLETA: un Referer "https://evil.example/almacen/x" pasa la validacion y el
+  navegador acaba en evil.example. El comentario ("evita open redirect") es incorrecto.
+  Escenario: requiere sesion valida y que la cookie viaje (sameSite=lax lo dificulta en POST
+  cross-site), por eso solo MEDIA, pero es un defecto real.
+  Correccion: redirigir solo a pathname+search del Referer, comprobando ademas que el origen
+  coincide con el host propio.
+
+SEG-10 [MEDIA] Amplificacion / consumo de recursos
+  Hallazgo: GET /api/recepciones o /almacen/recepciones sin filtro = 2 llamadas a LUX, ~5 s y
+  3,6 MB por peticion; el watcher y la web comparten la misma sesion de LUX. La cache de
+  catalogos usa claves con el parametro 'propietario' controlado por el cliente y no tiene
+  limite de tamano ni expulsion (la memoria crece con valores distintos).
+  Correccion: rate limit, limitador de concurrencia hacia LUX, paginacion obligatoria,
+  cache LRU con tamano maximo y validacion de 'propietario' (longitud/caracteres).
+
+--- BAJA ----------------------------------------------------------------
+
+SEG-11 [BAJA] CSRF
+  POST /login, /logout y /set-almacen no llevan token anti-CSRF. Mitigado por sameSite=lax
+  (el navegador no envia la cookie en POST cross-site) pero no ante ataques same-site.
+  Correccion: token CSRF por sesion o sameSite=strict.
+
+SEG-12 [BAJA] X-Correlation-Id sin validar
+  Se acepta tal cual del cliente (longitud/caracteres libres) y se refleja en cabecera de
+  respuesta y logs. JSON.stringify evita inyeccion de lineas, pero permite ruido/volumen.
+  Correccion: aceptar solo /^[A-Za-z0-9_-]{1,64}$/ y generar uno nuevo si no cumple.
+
+SEG-13 [BAJA] Gestion de contrasenas y secretos
+  - La longitud minima (8) solo se comprueba en el script CLI; la contrasena se pasa como
+    argumento (queda en el historial del shell y en la lista de procesos).
+  - bcrypt con 10 rondas (subir a 12), sin cambio de contrasena, caducidad ni bloqueo.
+  - SESSION_SECRET y AZA_API_KEY no se validan (longitud/entropia minimas).
+  Correccion: pedir la contrasena por stdin/prompt, politica minima en el servidor, validar
+  secretos >= 32 caracteres aleatorios al arrancar.
+
+SEG-14 [BAJA] Errores y logs
+  La web muestra err.message al usuario (incluye texto funcional devuelto por LUX). El logger
+  redacta por NOMBRE de campo, no por contenido; mensajeLux y errores de LUX van a consola
+  sin rotacion ni permisos definidos.
+  Correccion: mensaje generico al usuario + detalle solo en log; rotacion y ACL de logs.
+
+SEG-15 [BAJA] Datos personales en disco sin politica de retencion
+  Los JSON de data\watcher-events contienen datos de clientes (direcciones, telefonos, correos,
+  conductores/DNI en rutas) en claro y sin purga automatica (RGPD: minimizacion/retencion).
+  Correccion: definir retencion y purga, cifrado en reposo (BitLocker) y acceso restringido.
+
+--- INFORMATIVO: lo que esta bien ----------------------------------------
+- NO hay inyeccion SQL ni de comandos en este codigo: todo va a LUX como JSON por una whitelist
+  de procedimientos (assertValidProcedureName). Los esquemas zod descartan claves desconocidas
+  (no hay mass-assignment) y usuario/almacen se eliminan del cuerpo antes de enviar.
+  Salvedad: los filtros de listado llegan a LUX, que parece usar LIKE (se vio '%3462%'); un
+  cliente puede meter comodines % y _ (consultas mas pesadas, no inyeccion).
+- XSS: EJS escapa con <%= %>; el unico <%- %> es el cuerpo ya renderizado (layout.ejs).
+- X-Api-Key se compara en tiempo constante; sesion regenerada en el login; cookie httpOnly +
+  sameSite; contrasenas con bcrypt; el logger redacta password/token/authorization.
+- .env, data/ y los .sqlite3 NO estan versionados (git ls-files lo confirma).
+- Las escrituras a LUX nunca se reintentan automaticamente (evita duplicados).
+
+--- PLAN DE CORRECCION POR PRIORIDAD -------------------------------------
+HOY:         SEG-1 (rotar LUX_PASSWORD), SEG-2 (permisos de data/ y .env).
+ESTA SEMANA: SEG-3 (rate limit), SEG-4 (bcrypt en usuario inexistente), SEG-7 (npm audit fix),
+             SEG-8 (helmet, x-powered-by, /docs), SEG-9 (redireccion abierta).
+SIGUIENTE:   SEG-5 (TLS + trust proxy), SEG-6 (claves por consumidor y almacenes por usuario),
+             SEG-10 (limites y LRU), SEG-11/12/13/14/15.
+
+======================================================================
+LATENCIA EVENTO -> JSON (~7-8 s): EXPLICACION Y COMO RESOLVERLO
+======================================================================
+Estado: PENDIENTE DE DECIDIR (nada aplicado). Valores actuales en .env:
+WATCHER_POLL_MS=3000 y WATCHER_DEBOUNCE_MS=5000.
+
+1. DONDE SE VAN LOS SEGUNDOS (medido: 6,9 s y 8,1 s en dos eventos reales)
+   t=0      LUX escribe la linea en lux.log.0 / lux.log.0 de LUX_mobile
+   0-3 s    espera del sondeo: el watcher mira los ficheros cada 3 s, la linea espera hasta
+            el siguiente sondeo (media 1,5 s)
+   +5 s     debounce: tras detectar la linea se espera 5 s sin mas lineas de ese pedido
+   +0,4 s   re-consulta a LUX (4 llamadas) + escritura del JSON (2-3 ms)
+   Total = (0..3) + 5 + 0,4 = 5,4 a 8,4 s. El 90% es espera deliberada, no trabajo.
+
+2. POR QUE EXISTEN ESAS ESPERAS (no son un descuido)
+   - Sondeo (no fs.watch): los logs estan en una unidad de red y los eventos nativos de cambio
+     de fichero no son fiables ahi. Hay que leer cada X segundos.
+   - Debounce, DOS funciones:
+     a) Agrupar: la PDA genera varias lineas seguidas del mismo pedido; sin debounce se haria
+        una re-consulta (4 llamadas a LUX) por linea.
+     b) Dejar que LUX termine: la linea se escribe cuando EMPIEZA el procedimiento, no cuando
+        termina. Si consultaramos al instante podriamos leer el estado ANTERIOR al cambio y,
+        como no llegaria otra linea, el JSON quedaria desactualizado. Por eso no se puede
+        bajar a 0.
+
+3. COMO ACELERAR (de menos a mas cambio)
+   A) Solo configuracion (.env + reiniciar el watcher):
+      WATCHER_POLL_MS=1000 y WATCHER_DEBOUNCE_MS=2000  ->  latencia 2,4 a 3,4 s.
+      Mas agresivo: 500 / 1000 -> 1,4 a 1,9 s.
+      Coste: (i) mas lecturas de la unidad de red (2 ficheros por sondeo; con 1000 ms son 2
+      lecturas pequenas por segundo, despreciable); (ii) mas re-consultas a LUX cuando varias
+      lineas del mismo pedido llegan separadas por mas que el debounce (p.ej. un operario
+      escaneando cada 3 s ya no se agrupa con 2 s). Cada re-consulta = 4 llamadas (~0,4 s).
+      Carga actual medida: ~1,5 refrescos/min -> hay mucho margen.
+      Riesgo del debounce <1 s: leer el estado antiguo (ver 2b).
+   B) Codigo (recomendado junto con A): tope maximo de espera ("maxWait").
+      Hoy el debounce es DESLIZANTE: cada linea nueva del mismo pedido reinicia los 5 s. Si el
+      operario escanea sin parar (linea cada <5 s), el refresco no se ejecuta hasta que haya 5 s
+      de silencio: la latencia no esta acotada, puede ser de minutos. Anadir un tope (p.ej. 15 s)
+      tras el cual se refresca aunque sigan llegando lineas.
+   C) Codigo, opcional: "leading + trailing". La primera linea dispara un refresco enseguida
+      (tras ~1 s de cortesia) y las siguientes del mismo pedido se agrupan en uno final.
+      Latencia del primer cambio ~poll + 1 s. Coste: hasta 2 refrescos por rafaga en vez de 1.
+   D) Descartado: fs.watch / eventos nativos (poco fiables en red); reducir las 4 llamadas a LUX
+      (ahorra ~0,1 s de ~7 s); bajar el debounce a 0 (estados desactualizados).
+
+4. RECOMENDACION
+   Aplicar A con 1000 / 2000 y B con maxWait de 15 s. Resultado esperado: ~3 s en el caso
+   normal, y como maximo ~15 s aunque haya actividad continua. Despues, vigilar 1-2 dias:
+   (a) numero de refrescos por minuto, (b) algun JSON con estado antiguo respecto a LUX.
+   Si aparece (b), subir el debounce a 3000.
+   Verificacion: restar la hora de la linea del log de LUX a la hora del nombre del JSON (el
+   nombre lleva la hora local con milisegundos), como se hizo el 2026-10-01.
+
+======================================================================
+APLICADO 2026-10-01: LATENCIA + "NO PERDER NINGUN EVENTO"
+======================================================================
+Resuelve el punto 1 [ALTA] de PENDIENTE (posicion guardada antes de procesar) y el apartado
+LATENCIA EVENTO -> JSON (opciones A y B). Quedan CERRADOS esos dos puntos.
+
+CAMBIOS
+- Latencia: WATCHER_POLL_MS 3000 -> 1000 y WATCHER_DEBOUNCE_MS 5000 -> 2000 (defaults y .env).
+  Esperado: 2,4 a 3,4 s por evento (antes 5,4 a 8,4 s).
+- Tope de espera (maxWait): nuevo WATCHER_MAX_WAIT_MS=15000. El debounce deslizante ya no puede
+  aplazar un refresco mas de 15 s desde la primera linea, aunque no pare la actividad.
+- Garantia "al menos una vez" (no perder eventos):
+  * LogTailer ya no guarda la posicion al leer. El watcher la confirma (commit) SOLO cuando no
+    queda nada pendiente, en curso ni en reintento (isIdle). Se confirma como maximo cada 5 s y
+    al parar el servicio (stop() es ahora async y confirma si esta en reposo).
+  * Si el proceso se para o cae con eventos sin procesar, al arrancar relee desde la ultima
+    posicion confirmada y los reprocesa (el refresco es idempotente).
+  * Un refresco que falla por causa transitoria (LUX caido, red, token, HTTP 5xx, fallo del sink)
+    se REINTENTA (WATCHER_RETRY_MS=30000, espera x1, x2, x3... hasta 5 min) hasta que sale bien.
+    Tambien las rutas enviadas cuya resolucion falla por esa causa.
+  * Las llamadas de lineas/contenedores/HUs ya no se guardan "vacias" si fallan por causa
+    transitoria: se reintenta todo el refresco (los errores funcionales siguen siendo mejor
+    esfuerzo).
+  * Escritura del fichero de estado serializada y con instantanea sincrona (no se puede adelantar
+    la posicion entre la comprobacion de reposo y la escritura).
+- Tests nuevos (197 en verde): tope maxWait con actividad continua; reintento tras LUX caido;
+  parar con un evento pendiente y recuperarlo al reiniciar; commit manual del tailer.
+
+LIMITES CONOCIDOS (decisiones a revisar)
+- Semantica "al menos una vez": tras un corte puede reprocesarse algun evento ya tratado (el
+  JSON resultante es el mismo; con una BD futura la escritura debe ser idempotente/upsert).
+- Reintentos sin limite para causas transitorias: si LUX esta caido horas, la posicion no
+  avanza y al reiniciar se relee todo desde la ultima confirmada. Si el corte supera la
+  rotacion de DOS logs (.0 -> .1 -> .2) el tramo intermedio ya no existe (solo se leen .0 y .1).
+- Un error permanente (p.ej. credenciales de LUX mal tras rotar la clave) se trata como
+  transitorio (LuxAuthError): reintenta cada pocos minutos y bloquea la confirmacion hasta
+  corregirlo; el log lo indica con "reintentara": true.
+- Con debounce 2 s hay mas re-consultas si un operario escanea lineas del mismo pedido con
+  separacion >2 s. Vigilar 1-2 dias: refrescos/minuto y JSON con estado desactualizado; si
+  aparece, subir WATCHER_DEBOUNCE_MS a 3000.
+- Requiere reiniciar el watcher para que aplique (ver README, comandos rapidos).

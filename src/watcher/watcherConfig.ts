@@ -13,6 +13,12 @@ export interface WatcherConfig {
   /** Ventana de espera tras el ultimo evento detectado para un pedido antes de re-consultarlo
    *  (agrupa varias lineas seguidas del mismo pedido en una sola llamada a la API). */
   debounceMs: number;
+  /** Tope de espera del debounce desde la primera linea agrupada: aunque sigan llegando lineas del
+   *  mismo pedido, se refresca como maximo a los maxWaitMs (acota la latencia). */
+  maxWaitMs: number;
+  /** Espera base entre reintentos de un refresco fallido por causa transitoria (LUX/red/sink);
+   *  crece con cada intento (x1, x2, x3...) hasta 5 minutos. */
+  retryDelayMs: number;
   /** Carpeta donde se guarda un JSON por evento (ver src/watcher/jsonFileSink.ts), solucion
    *  provisional mientras se define el destino definitivo (paso 3, ver watcherSink.ts). */
   jsonEventsDir: string;
@@ -57,8 +63,10 @@ export function loadWatcherConfig(raw: NodeJS.ProcessEnv = process.env): Watcher
   return {
     luxLogPath: requireString('LUX_LOG_PATH', raw),
     luxMobileLogPath: requireString('LUX_MOBILE_LOG_PATH', raw),
-    pollIntervalMs: optionalInt('WATCHER_POLL_MS', raw, 3000),
-    debounceMs: optionalInt('WATCHER_DEBOUNCE_MS', raw, 5000),
+    pollIntervalMs: optionalInt('WATCHER_POLL_MS', raw, 1000),
+    debounceMs: optionalInt('WATCHER_DEBOUNCE_MS', raw, 2000),
+    maxWaitMs: optionalInt('WATCHER_MAX_WAIT_MS', raw, 15000),
+    retryDelayMs: optionalInt('WATCHER_RETRY_MS', raw, 30000),
     jsonEventsDir: optionalString('WATCHER_JSON_DIR', raw, 'data/watcher-events'),
     stateDir: optionalString('WATCHER_STATE_DIR', raw, 'data/watcher-state'),
   };

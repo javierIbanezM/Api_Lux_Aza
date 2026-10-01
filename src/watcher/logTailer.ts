@@ -37,6 +37,9 @@ export class LogTailer {
   private partial: Buffer = Buffer.alloc(0);
   private stateLoaded: boolean;
   private polling = false;
+  /** Hay posicion leida que aun no se ha persistido. */
+  private dirty = false;
+  private saveChain: Promise<void> = Promise.resolve();
   private readonly rotatedPath: string | undefined;
 
   constructor(
@@ -44,6 +47,10 @@ export class LogTailer {
     private readonly onLines: (lines: string[]) => void,
     private readonly onError: (err: unknown) => void,
     private readonly statePath?: string,
+    /** true: la posicion se persiste tras cada lectura. false: solo cuando el llamador invoca
+     *  `commit()` (el watcher lo hace cuando todo lo leido ya esta procesado, para que un corte
+     *  no pueda perder eventos leidos pero aun sin procesar). */
+    private readonly autoCommit: boolean = true,
   ) {
     this.stateLoaded = statePath === undefined;
     this.rotatedPath = /\.0$/.test(filePath) ? filePath.replace(/\.0$/, '.1') : undefined;
@@ -67,7 +74,7 @@ export class LogTailer {
       if (!this.state) {
         // Primera vez: nos situamos al final, no reprocesamos el historico.
         this.state = { position: stats.size, fingerprint };
-        await this.saveState();
+        await this.persist();
         return;
       }
 
@@ -88,7 +95,7 @@ export class LogTailer {
         if (stats.size === saved.position) {
           if (saved.fingerprint === undefined && fingerprint !== undefined) {
             saved.fingerprint = fingerprint;
-            await this.saveState();
+            await this.afterRead();
           }
           return; // sin novedades
         }
@@ -99,7 +106,7 @@ export class LogTailer {
 
       this.state = { position: newPosition, fingerprint };
       this.emit(data);
-      await this.saveState();
+      await this.afterRead();
     } catch (err) {
       this.onError(err);
     } finally {
@@ -208,13 +215,39 @@ export class LogTailer {
     return undefined;
   }
 
-  private async saveState(): Promise<void> {
-    if (!this.statePath || !this.state) {
-      return;
+  private async afterRead(): Promise<void> {
+    this.dirty = true;
+    if (this.autoCommit) {
+      await this.persist();
     }
-    await mkdir(dirname(this.statePath), { recursive: true });
+  }
+
+  /** Persiste la posicion leida hasta ahora (solo si hay algo nuevo). Con `autoCommit=false` lo
+   *  invoca el llamador cuando todo lo leido ya esta procesado. */
+  async commit(): Promise<void> {
+    if (this.dirty) {
+      await this.persist();
+    }
+  }
+
+  /** Escribe la posicion actual. La instantanea (posicion/huella) se toma AHORA, de forma
+   *  sincrona, y las escrituras se encadenan para no solaparse sobre el mismo fichero. */
+  private persist(): Promise<void> {
+    if (!this.statePath || !this.state) {
+      return Promise.resolve();
+    }
+    const statePath = this.statePath;
     // Se descuenta la linea parcial pendiente para que, tras un reinicio, se vuelva a leer entera.
-    const position = Math.max(0, this.state.position - this.partial.length);
-    await writeFile(this.statePath, JSON.stringify({ ...this.state, position }), 'utf-8');
+    const snapshot = {
+      position: Math.max(0, this.state.position - this.partial.length),
+      fingerprint: this.state.fingerprint,
+    };
+    this.dirty = false;
+    const write = async (): Promise<void> => {
+      await mkdir(dirname(statePath), { recursive: true });
+      await writeFile(statePath, JSON.stringify(snapshot), 'utf-8');
+    };
+    this.saveChain = this.saveChain.then(write, write);
+    return this.saveChain;
   }
 }

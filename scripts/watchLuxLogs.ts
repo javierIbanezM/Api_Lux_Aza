@@ -60,8 +60,8 @@ function bootstrap(): void {
       resultado: 'OK',
       signal,
     });
-    watcher.stop();
-    process.exit(0);
+    // Confirma la posicion de los logs (si no hay nada pendiente) antes de salir.
+    void watcher.stop().finally(() => process.exit(0));
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
