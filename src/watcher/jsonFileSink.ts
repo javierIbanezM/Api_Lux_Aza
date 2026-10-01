@@ -100,9 +100,28 @@ export function createJsonFileSink(dir: string, logger: Logger, destino?: Destin
     });
   };
 
+  /** Cola por sufijo: dos eventos del MISMO pedido/albaran (p.ej. uno llegado por id y otro por
+   *  texto) nunca se procesan a la vez, asi el segundo ve (y descarta) el fichero del primero y
+   *  como mucho queda un JSON por pedido/albaran. */
+  const colas = new Map<string, Promise<void>>();
+  const enCola = (sufijo: string, tarea: () => Promise<void>): Promise<void> => {
+    const previa = colas.get(sufijo) ?? Promise.resolve();
+    const actual = previa.then(tarea, tarea);
+    colas.set(sufijo, actual);
+    void actual.then(
+      () => undefined,
+      () => undefined,
+    ).then(() => {
+      if (colas.get(sufijo) === actual) {
+        colas.delete(sufijo);
+      }
+    });
+    return actual;
+  };
+
   /** Guarda el JSON mas actual (descartando los previos) salvo que sea estado final; en ese
    *  caso, con `destino`, los JSON solo se borran tras la confirmacion del destino. */
-  const procesar = async (
+  const procesarSinCola = async (
     sufijo: string,
     data: unknown,
     esFinal: boolean,
@@ -134,6 +153,9 @@ export function createJsonFileSink(dir: string, logger: Logger, destino?: Destin
     await borrarFicherosDe(sufijo);
   };
 
+  const procesar = (sufijo: string, data: unknown, esFinal: boolean, persistir: () => Promise<void>): Promise<void> =>
+    enCola(sufijo, () => procesarSinCola(sufijo, data, esFinal, persistir));
+
   return {
     onExpedicionActualizada: (result: ExpedicionActualizada) =>
       procesar(
@@ -152,8 +174,10 @@ export function createJsonFileSink(dir: string, logger: Logger, destino?: Destin
     // Ruta enviada sin pedidos en LUX: un JSON por ruta (el mas reciente), sin estado final.
     onRutaEnviadaSinPedidos: async (result: RutaEnviadaSinPedidos) => {
       const sufijo = `ruta-${sanitizar(result.idRuta)}`;
-      await borrarFicherosDe(sufijo);
-      await guardar(sufijo, result);
+      await enCola(sufijo, async () => {
+        await borrarFicherosDe(sufijo);
+        await guardar(sufijo, result);
+      });
     },
   };
 }

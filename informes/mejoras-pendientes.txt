@@ -421,3 +421,87 @@ LIMITES CONOCIDOS (decisiones a revisar)
   separacion >2 s. Vigilar 1-2 dias: refrescos/minuto y JSON con estado desactualizado; si
   aparece, subir WATCHER_DEBOUNCE_MS a 3000.
 - Requiere reiniciar el watcher para que aplique (ver README, comandos rapidos).
+
+======================================================================
+REVISION DE EVENTOS: LOGS REALES vs JSON (2026-10-01 ~19:30)
+======================================================================
+Metodo: se leyeron lux.log.1 y lux.log.0 de LUX y de LUX_mobile (T:\TLSI\...), se aplicaron las
+MISMAS reglas de deteccion del watcher (matchActionLine) a todas las lineas desde el arranque
+del watcher continuo (30-sep 18:15:39), se agruparon por pedido/albaran (ultimo evento de cada
+uno) y se cruzaron con data/watcher-events. Para saber si el JSON estaba al dia se uso el propio
+log de LUX (consulta de apiUser posterior al ultimo evento), NO la hora del fichero: el reloj de
+este PC y el de LUX difieren hasta ~30 s en algunos momentos.
+Las rutas enviadas se resolvieron a pedidos con p_expRutasDetalle.
+
+RESULTADO: 654 pedidos/albaranes con eventos
+  - 476 OK: JSON presente y con refresco posterior al ultimo evento (se queda el mas reciente).
+  - 154 OK: sin JSON porque hoy estan en estado final (ENVIADO / CERRADO): borrado correcto.
+  -  22 con incidencia (17 entidades reales + 4 posibles falsos positivos + 1 sin explicar):
+
+A) PERDIDOS POR ROTACION MIENTRAS EL WATCHER NO LEIA (10 entidades) - YA CORREGIDO PARA EL FUTURO
+   Eventos del 30-sep 18:15 al 1-oct ~06:37 (LUX) / ~09:08 (mobile), que estan en lux.log.1:
+   IMPWEST300926, REE2067 (albaran + id 15682), 42429, 42358, 42361, 42288, 42289, 42292,
+   15671 (rec), 15614 (rec). No hay ningun JSON entre las 18:15 del 30-sep y las 09:24 del
+   1-oct: el equipo estuvo sin sondear toda la noche (suspension/red) y, al volver a las 09:24,
+   el codigo antiguo vio que el log habia rotado y empezo a leer el lux.log.0 NUEVO desde el
+   principio, saltandose el final de lux.log.1. Es exactamente el caso que cubre la
+   recuperacion .0/.1 anadida hoy (ya no ocurre).
+   Estado actual en LUX: 42288/42289/42292 CERRADO, 15614 RECEPCION, REE2067 PTE. RECEPCION,
+   IMPWEST CREACION. Se pueden regenerar a mano si se necesitan (ver ACCIONES).
+
+B) PERDIDOS POR CORTE DE RED A LAS 13:03 (6 entidades) - YA CORREGIDO PARA EL FUTURO
+   42414, 42190, 42708 (AZA/OUT/02001), 42713, 42712, 42711. El log del watcher muestra
+   ENETUNREACH en la unidad de red y 10 "Error de red llamando a LUX" a las 11:03Z (13:03
+   local): el codigo antiguo descartaba el refresco fallido. Con los reintentos y la
+   confirmacion de posicion de hoy ya no se pierden.
+
+C) RUTAS 14384 y 14668 (4 pedidos: 42819, 42795, 42820, 42822) - PROBABLE FALSO POSITIVO
+   La ruta hoy tiene mas pedidos de los que habia al enviarla: el watcher refresco 6 de los 8
+   actuales de la 14668 y 5 de los 6 de la 14384, y esos pedidos no figuran en el log de LUX
+   como asignados antes del envio. No parece perdida; se pueden verificar con operaciones.
+
+D) UNO SIN EXPLICAR: pedido 42502 (0080708368_4)
+   ACTUALIZAR por LAndreuP a las 09:36:56 (LUX). El unico refresco de apiUser es de las
+   09:36:28 (por un evento anterior del mismo pedido); no hay refresco posterior. El JSON
+   existente es de ese evento anterior. Ocurrio con el codigo antiguo (sin logs capturados de
+   esa ejecucion). Estado del JSON: CREACION, motivo expedicionCabeceraActualizada.
+
+E) DOS DUDOSOS: RES2076 (alta del 30-sep 21:55, hoy no aparece en LUX) y 42593 (LUX no
+   devuelve cabecera: ya no existe o es de otro almacen).
+
+OTRAS ANOMALIAS DETECTADAS EN LOS JSON (no son eventos perdidos)
+- DUPLICADOS (idParent repetido, deberia quedar solo el mas reciente): 2 sufijos tienen 2
+  ficheros: recepcion-TRICORBROUN_0093603 (09:24:36.098 y .100) y recepcion-DKSH_161017914
+  (15:48:42.365 y .366). Causa: el mismo albaran llega con dos claves distintas (por id y por
+  texto) y se refrescan en paralelo; ambos escriben con 1-2 ms de diferencia y el borrado de
+  "los previos" no ve al otro. Pendiente: serializar el sink por sufijo.
+- 7 JSON de recepcion en estado CERRADO siguen en disco (09:24-09:49): se escribieron antes de
+  existir la regla "CERRADO borra el JSON". Se pueden borrar a mano.
+- 12 JSON de expedicion SIN campo estado: p_expedicionesAza no devuelve esos "pedidos"
+  (reservas de muelle, contenedores, EXP0000078/79, PALETIZADO 40...) ni con estado=ENVIADO.
+  Sin estado la regla de borrado no puede actuar. Decidir si se ignoran o se limpian a mano.
+- El listado sin filtro de expediciones no incluye ENVIADO; la consulta por pedido si lo
+  devuelve (por eso el borrado por ENVIADO funciona).
+
+ACCIONES PROPUESTAS (pendientes)
+1. Regenerar los JSON de A y B (16 entidades): re-consultar LUX y escribir el estado actual
+   (los que esten en estado final no generan JSON). Script puntual, sin tocar el watcher.
+2. Corregir duplicados: mutex por sufijo en jsonFileSink (o clave canonica por entidad).
+3. Borrar a mano los 7 CERRADO antiguos y decidir sobre los 12 sin estado.
+4. Confirmar con operaciones las rutas 14384/14668 (punto C).
+5. Vigilar 1-2 dias con el codigo nuevo y repetir esta revision (el script de cruce se uso
+   una vez y se borro; se puede volver a crear a partir de esta descripcion).
+
+----------------------------------------------------------------------
+HECHO TRAS LA REVISION (2026-10-01 ~19:50)
+----------------------------------------------------------------------
+- Duplicados CORREGIDOS: jsonFileSink serializa por sufijo (cola por pedido/albaran), asi dos
+  eventos simultaneos del mismo albaran ya no dejan dos ficheros; test nuevo (198 en verde).
+  Borrado el fichero MAS ANTIGUO de los 2 duplicados existentes (TRICORBROUN_0093603 y
+  DKSH_161017914), conservado el mas reciente.
+- Regenerados los 16 casos de los grupos A y B con la misma logica de refresco del watcher y el
+  mismo sink: 12 JSON escritos (estado actual en LUX) y 4 sin JSON por estar en estado final
+  (1265, 263895-A, 263898-A -> ENVIADO; 033920 -> CERRADO; se borraron sus JSON antiguos).
+  0 fallos.
+- Siguen PENDIENTES: rutas 14384/14668 (confirmar con operaciones), pedido 42502 (sin explicar),
+  los 7 JSON CERRADO antiguos y los 12 JSON sin estado.

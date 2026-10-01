@@ -296,3 +296,31 @@ describe('watcher/jsonFileSink ruta enviada sin pedidos', () => {
     }
   });
 });
+
+describe('watcher/jsonFileSink eventos simultaneos del mismo albaran', () => {
+  it('deja un unico JSON aunque lleguen varios eventos a la vez', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    try {
+      const sink = createJsonFileSink(dir, createLogger('error'));
+      const base: AlbaranActualizado = {
+        idAlbaran: '1',
+        albaran: 'DKSH_161017914',
+        estado: 'RECEPCION',
+        motivos: ['recepcionLineaConfirmada'],
+        lineas: [],
+        hus: [],
+      };
+      await Promise.all([
+        sink.onAlbaranActualizado?.({ ...base, estado: 'PENDIENTE' }),
+        sink.onAlbaranActualizado?.({ ...base, estado: 'RECEPCION' }),
+        sink.onAlbaranActualizado?.({ ...base, estado: 'ASIGNADO' }),
+      ]);
+      const ficheros = readdirSync(dir);
+      expect(ficheros).toHaveLength(1);
+      // El ultimo en llegar es el que se queda.
+      expect(JSON.parse(readFileSync(join(dir, ficheros[0] as string), 'utf-8')).estado).toBe('ASIGNADO');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
