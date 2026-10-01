@@ -137,6 +137,15 @@ export class RecepcionesService {
     return rows[0] as RecepcionLinea;
   }
 
+  /**
+   * Listado de recepciones (p_recepcionesAza, accion=SELECT). IMPORTANTE (confirmado contra el
+   * servidor real): sin filtro `estado`, LUX NO devuelve las recepciones en estado `CERRADO` --
+   * a diferencia de expediciones, donde el listado sin filtro si incluye las `CERRADO`. En un
+   * almacen real esto escondia 4018 recepciones `CERRADO` frente a solo 123 del resto de estados
+   * combinados. Para que "sin filtro" signifique realmente "todas", cuando no se pide un `estado`
+   * concreto se hace una segunda llamada pidiendo expresamente `estado='CERRADO'` y se fusiona.
+   * Si el llamador SI filtra por un estado concreto, no se hace la llamada extra.
+   */
   async listarRecepciones(filters: ListarRecepcionesFiltersDTO = {}, almacen?: string): Promise<RecepcionListItem[]> {
     const dto = parseOrThrow(listarRecepcionesFiltersSchema, filters);
     const body = buildProcBody(dto as RecepcionListFilters);
@@ -144,7 +153,16 @@ export class RecepcionesService {
       operacion: 'recepciones.listarRecepciones',
       almacen,
     });
-    return rows as RecepcionListItem[];
+    if (dto.estado) {
+      return rows as RecepcionListItem[];
+    }
+    const cerradas = await this.luxClient.callProc(
+      'p_recepcionesAza',
+      'SELECT',
+      { ...body, estado: 'CERRADO' },
+      { operacion: 'recepciones.listarRecepciones.cerradas', almacen },
+    );
+    return [...rows, ...cerradas] as RecepcionListItem[];
   }
 
   async obtenerRecepcion(idAlbaran: string, almacen?: string): Promise<Recepcion> {

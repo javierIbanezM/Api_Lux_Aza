@@ -171,11 +171,53 @@ describe('RecepcionesService', () => {
     mock.updateOptions({
       onProc: (proc, body) => {
         expect(proc).toBe('p_recepcionesAza');
+        if (body.estado === 'CERRADO') {
+          return { status: 200, body: [] };
+        }
         expect(body).toEqual({ accion: 'SELECT', propietario: 'AZA' });
         return { status: 200, body: [{ id: '3012', albaran: 'ALB-77' }] };
       },
     });
     const result = await service.listarRecepciones({ propietario: 'AZA' });
+    expect(result).toHaveLength(1);
+  });
+
+  it('listarRecepciones sin filtro de estado hace una segunda llamada con estado=CERRADO y fusiona (LUX no las devuelve sin filtro)', async () => {
+    const llamadas: Array<Record<string, string>> = [];
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        llamadas.push(body);
+        if (body.estado === 'CERRADO') {
+          return { status: 200, body: [{ id: '9001', albaran: 'ALB-CERRADA', estado: 'CERRADO' }] };
+        }
+        return { status: 200, body: [{ id: '3012', albaran: 'ALB-77', estado: 'CREACION' }] };
+      },
+    });
+
+    const result = await service.listarRecepciones({});
+
+    expect(llamadas).toHaveLength(2);
+    expect(llamadas[0]).toEqual({ accion: 'SELECT' });
+    expect(llamadas[1]).toEqual({ accion: 'SELECT', estado: 'CERRADO' });
+    expect(result).toEqual([
+      { id: '3012', albaran: 'ALB-77', estado: 'CREACION' },
+      { id: '9001', albaran: 'ALB-CERRADA', estado: 'CERRADO' },
+    ]);
+  });
+
+  it('listarRecepciones filtrando por un estado concreto NO hace la segunda llamada', async () => {
+    let llamadas = 0;
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        llamadas += 1;
+        expect(body).toEqual({ accion: 'SELECT', estado: 'DISCREPANCIA' });
+        return { status: 200, body: [{ id: '5000', albaran: 'ALB-D', estado: 'DISCREPANCIA' }] };
+      },
+    });
+
+    const result = await service.listarRecepciones({ estado: 'DISCREPANCIA' });
+
+    expect(llamadas).toBe(1);
     expect(result).toHaveLength(1);
   });
 

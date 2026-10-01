@@ -637,3 +637,27 @@ directa del log o contra el servidor real:
 Todos estos procedimientos que solo se usan para lectura desde el watcher (no expuestos por ningún
 endpoint de `/api/*`) están en la whitelist igualmente (`src/lux/procedures/whitelist.ts`) para que
 `LuxClient` los acepte cuando el watcher los invoca.
+
+## 17. `p_recepcionesAza`, `accion=SELECT` oculta las recepciones `CERRADO` sin filtro de `estado` (2026-10-01)
+
+Confirmado contra el servidor real (producción, `.140`): `p_recepcionesAza SELECT` **sin** filtro
+`estado` NO devuelve las recepciones en estado `CERRADO` — hacía falta pedir explícitamente
+`estado='CERRADO'` para verlas. En un almacén real esto escondía **4018** recepciones `CERRADO`
+frente a solo 123 del resto de estados combinados (`CREACION`, `PTE. RECEPCION`, `DISCREPANCIA`,
+`RECEPCION`, `RECEPCIONADO`). Un valor vacío (`estado=''`) no cambia el comportamiento — hay que
+pedir literalmente `'CERRADO'`.
+
+**Importante**: `p_expedicionesAza SELECT` (expediciones) **no tiene este problema** — su listado
+sin filtro sí incluye las `CERRADO` (confirmado: 115 de 343 filas eran `CERRADO`). Es un
+comportamiento específico de `p_recepcionesAza`, no un patrón general de la API.
+
+* `RecepcionesService.listarRecepciones` ahora hace una segunda llamada con `estado='CERRADO'` y
+  fusiona el resultado, **solo cuando el llamador no pidió ya un `estado` concreto** (si se filtra
+  por un estado explícito, como antes, una sola llamada). Afecta tanto a `GET /api/recepciones`
+  como a `/almacen/recepciones`.
+* TODO — no confirmado: si existen otros estados de recepción igual de "ocultos" sin filtro
+  (se probó `ANULADO`, `RECIBIDO`, `FINALIZADO`: ninguno de los tres tiene datos actualmente, así
+  que no se puede confirmar si también estarían ocultos).
+* Nota de rendimiento: con el fix, el listado sin filtro de un almacén con mucho histórico puede
+  devolver miles de filas (4141 en el caso probado) en una sola respuesta/tabla sin paginar — no
+  se ha añadido paginación, solo se corrigió que faltaban datos.
