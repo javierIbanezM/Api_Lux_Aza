@@ -4,6 +4,46 @@ Integración de **AZA Logistics** con la API **LUX (Whales)**: autenticación, c
 resiliente hacia LUX y una API REST propia (`/api/expediciones`, `/api/recepciones`,
 `/api/catalogos`) que envuelve los procedimientos almacenados autorizados.
 
+## Produccion con PM2 (servidor y watcher siempre arriba)
+
+`ecosystem.config.js` define los dos procesos: `api-whales` (servidor HTTP) y
+`api-whales-watcher` (watcher de logs). PM2 los reinicia solos si caen (con espera creciente) o si
+superan el limite de memoria, y escribe sus logs en `logs/`.
+
+```powershell
+# Una sola vez en el servidor
+npm install -g pm2
+pm2 install pm2-logrotate        # rota los logs de PM2 (evita que crezcan sin limite)
+
+# Despliegue / actualizacion (desde la raiz del proyecto, con .env ya rellenado)
+npm ci
+npm run build
+pm2 start ecosystem.config.js    # primera vez   (despues: pm2 restart ecosystem.config.js)
+pm2 save                         # guarda la lista para recuperarla tras reiniciar el servidor
+
+# Dia a dia
+pm2 list                         # estado de todas las apps
+pm2 logs api-whales-watcher      # logs en vivo (o api-whales)
+pm2 restart api-whales-watcher   # reiniciar solo uno
+pm2 stop api-whales-watcher      # parar solo uno
+```
+
+Arranque automatico con Windows (para que sobreviva a un reinicio del servidor): instalar
+`pm2-windows-startup` (`npm i -g pm2-windows-startup && pm2-startup install`) y luego `pm2 save`,
+o bien una Tarea programada "Al iniciar el sistema" que ejecute `pm2 resurrect`.
+
+Puntos importantes:
+- **Una sola instancia de cada uno** (ya configurado). Dos watchers duplicarian eventos y se
+  pisarian el estado; el servidor guarda las sesiones web en memoria.
+- **Unidades de red**: una letra mapeada (`S:`, `T:`) es de cada sesion de usuario y NO existe para
+  un servicio o una cuenta distinta. En el servidor usa la ruta UNC en `.env`:
+  `LUX_LOG_PATH=\\servidor\comparticion\TLSI\LUX\lux.log.0` (y `LUX_MOBILE_LOG_PATH`), y que la
+  cuenta con la que corre PM2 tenga permiso de lectura.
+- **Si cambias `.env`**: `pm2 restart ecosystem.config.js --update-env`.
+- **No uses `pm2 restart all` / `pm2 delete all`** si en el servidor hay otras aplicaciones en PM2.
+- Si el watcher cae o se reinicia no pierde eventos: al volver relee desde la ultima posicion
+  confirmada (`data/watcher-state/`), incluso si el log rota mientras estaba parado.
+
 ## Comandos rapidos del watcher de logs (PowerShell, desde `C:\API.WHALES`)
 
 ```powershell

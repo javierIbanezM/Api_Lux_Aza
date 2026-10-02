@@ -505,3 +505,25 @@ HECHO TRAS LA REVISION (2026-10-01 ~19:50)
   0 fallos.
 - Siguen PENDIENTES: rutas 14384/14668 (confirmar con operaciones), pedido 42502 (sin explicar),
   los 7 JSON CERRADO antiguos y los 12 JSON sin estado.
+
+----------------------------------------------------------------------
+APLICADO 2026-10-02: PM2 (servidor + watcher siempre arriba)
+----------------------------------------------------------------------
+- Nuevo ecosystem.config.js con api-whales (dist/src/server.js) y api-whales-watcher
+  (dist/scripts/watchLuxLogs.js): 1 instancia en modo fork cada uno, autorestart, espera
+  creciente entre reinicios, max_memory_restart, logs en logs/, parada ordenada por mensaje IPC.
+- El build ahora tambien compila scripts/ (tsconfig) para no depender de tsx en produccion;
+  scripts npm nuevos: start:watcher, pm2:start, pm2:restart, pm2:stop.
+- server.ts y watchLuxLogs.ts atienden el mensaje 'shutdown' de PM2 (en Windows no hay senales).
+  Verificado: ambos salen con codigo 0 y registran "detenido".
+- README: nueva seccion "Produccion con PM2" con comandos de despliegue, dia a dia y arranque
+  automatico con Windows.
+PENDIENTE EN EL SERVIDOR (no se puede hacer desde aqui)
+- Instalar pm2 y pm2-logrotate, arrancar con ecosystem.config.js, pm2 save y configurar el
+  arranque con Windows. Comprobar tras un reinicio del servidor que ambos siguen online.
+- Rutas UNC en LUX_LOG_PATH / LUX_MOBILE_LOG_PATH (las letras S:/T: no existen para un servicio)
+  y permiso de lectura de la cuenta que ejecute PM2 sobre esos logs.
+- Ejecutar PM2 con una cuenta de servicio con permisos minimos (ver SEG-2) y limitar data/ y
+  .env a esa cuenta.
+- Aqui en el PC de desarrollo siguen corriendo procesos sueltos (no PM2): no mezclar con PM2 en
+  la misma maquina para evitar dos watchers a la vez.

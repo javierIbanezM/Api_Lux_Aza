@@ -65,6 +65,12 @@ function bootstrap(): void {
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+  // PM2 en Windows no entrega senales: con `shutdown_with_message` pide el cierre por mensaje IPC.
+  process.on('message', (msg) => {
+    if (msg === 'shutdown') {
+      shutdown('pm2');
+    }
+  });
 }
 
 bootstrap();
