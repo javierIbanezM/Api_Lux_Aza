@@ -96,6 +96,30 @@ describe('Integracion: interfaz web de almacen (/almacen/*)', () => {
     expect(recepcionesResponse.text).toContain('ALB-0001');
   });
 
+  it('la cookie de sesion NO lleva el atributo Secure con sessionCookieSecure=false (acceso por HTTP plano)', async () => {
+    const abrirYLogin = async (sessionCookieSecure: boolean): Promise<string> => {
+      const config = buildTestConfig({ luxBaseUrl: baseUrl, sessionCookieSecure });
+      const logger = createLogger('error');
+      const app: Express = createApp(config, logger, buildDependencies(config, logger), webDb);
+      const srv = await startApp(app);
+      try {
+        const res = await httpRequest(srv.url, 'POST', '/almacen/login', {
+          body: 'username=almacen1&password=password-seria-123',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Forwarded-Proto': 'https' },
+        });
+        const raw = res.headers['set-cookie'];
+        return String(Array.isArray(raw) ? raw[0] : raw ?? '');
+      } finally {
+        await srv.close();
+      }
+    };
+
+    // Sin Secure: el navegador guarda y envia la cookie por http://servidor:3000.
+    const sinSecure = await abrirYLogin(false);
+    expect(sinSecure).toContain('aza.almacen.sid=');
+    expect(sinSecure).not.toMatch(/;\s*Secure/i);
+  });
+
   it('logout invalida la sesion: tras cerrar sesion, el listado vuelve a redirigir a login', async () => {
     const loginResponse = await httpRequest(appUrl, 'POST', '/almacen/login', {
       body: 'username=almacen1&password=password-seria-123',

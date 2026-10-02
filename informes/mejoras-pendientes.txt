@@ -527,3 +527,16 @@ PENDIENTE EN EL SERVIDOR (no se puede hacer desde aqui)
   .env a esa cuenta.
 - Aqui en el PC de desarrollo siguen corriendo procesos sueltos (no PM2): no mezclar con PM2 en
   la misma maquina para evitar dos watchers a la vez.
+
+----------------------------------------------------------------------
+APLICADO 2026-10-02: ACCESO A LA WEB POR HTTP (http://SRVNewWhales.zar.local:3000/)
+----------------------------------------------------------------------
+- Problema: con NODE_ENV=production (lo fija ecosystem.config.js) la cookie de sesion lleva el
+  atributo Secure y los navegadores no la guardan por HTTP: el login de /almacen no se mantiene.
+- Solucion: nueva variable SESSION_COOKIE_SECURE (por defecto true en produccion). En el .env del
+  servidor: SESSION_COOKIE_SECURE=false. Tests nuevos: config y atributo de la cookie (202 en verde).
+- URL de la interfaz: http://SRVNewWhales.zar.local:3000/almacen/login (= 192.168.2.140:3000).
+  Requiere abrir el puerto 3000 en el firewall del servidor (comando en el README).
+- PENDIENTE (seguridad, SEG-5): poner HTTPS con proxy (IIS/Nginx), app.set('trust proxy', 1) y
+  volver a SESSION_COOKIE_SECURE=true. Mientras tanto usuario/contrasena y X-Api-Key viajan en
+  claro por la red interna.

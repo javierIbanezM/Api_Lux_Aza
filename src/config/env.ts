@@ -25,6 +25,11 @@ export interface AppConfig {
    *  almacen (/almacen/*). Totalmente independiente de AZA_API_KEY (esa protege /api/*, un
    *  sistema de autenticacion maquina-a-maquina distinto). Nunca se loguea. */
   sessionSecret: string;
+  /** Si la cookie de sesion de la interfaz web lleva el atributo `secure` (solo viaja por HTTPS).
+   *  Por defecto true en produccion (NODE_ENV=production). Ponerlo a false (SESSION_COOKIE_SECURE=false)
+   *  permite usar la interfaz por HTTP plano (p.ej. http://servidor:3000) mientras no haya HTTPS:
+   *  con `secure` el navegador descarta la cookie por HTTP y el login no se mantiene. */
+  sessionCookieSecure: boolean;
 }
 
 class ConfigError extends Error {
@@ -62,6 +67,20 @@ function parseLogLevel(raw: NodeJS.ProcessEnv): AppConfig['logLevel'] {
   throw new ConfigError('LOG_LEVEL debe ser uno de: debug, info, warn, error');
 }
 
+function parseBool(name: string, raw: NodeJS.ProcessEnv, defaultValue: boolean): boolean {
+  const value = raw[name]?.trim().toLowerCase();
+  if (value === undefined || value === '') {
+    return defaultValue;
+  }
+  if (value === 'true' || value === '1') {
+    return true;
+  }
+  if (value === 'false' || value === '0') {
+    return false;
+  }
+  throw new ConfigError(`La variable de entorno ${name} debe ser true o false`);
+}
+
 export function loadConfig(raw: NodeJS.ProcessEnv = process.env): AppConfig {
   const luxBaseUrlRaw = requireString('LUX_BASE_URL', raw);
   return {
@@ -77,6 +96,7 @@ export function loadConfig(raw: NodeJS.ProcessEnv = process.env): AppConfig {
     nodeEnv: raw.NODE_ENV ?? 'development',
     azaApiKey: requireString('AZA_API_KEY', raw),
     sessionSecret: requireString('SESSION_SECRET', raw),
+    sessionCookieSecure: parseBool('SESSION_COOKIE_SECURE', raw, (raw.NODE_ENV ?? 'development') === 'production'),
   };
 }
 

@@ -15,6 +15,7 @@ export function buildTestConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     nodeEnv: 'test',
     azaApiKey: 'test-api-key',
     sessionSecret: 'test-session-secret',
+    sessionCookieSecure: false,
     ...overrides,
   };
 }

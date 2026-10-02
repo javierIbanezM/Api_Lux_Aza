@@ -35,8 +35,9 @@ export function createWebSessionMiddleware(config: AppConfig) {
       httpOnly: true,
       sameSite: 'lax',
       maxAge: 8 * 60 * 60 * 1000, // 8 horas de turno de almacen
-      // Solo exige HTTPS en produccion; en local/desarrollo se sirve normalmente por HTTP.
-      secure: config.nodeEnv === 'production',
+      // Por defecto solo exige HTTPS en produccion (SESSION_COOKIE_SECURE=false lo desactiva para
+      // servir la interfaz por HTTP plano; ver src/config/env.ts). Con HTTPS delante, dejarlo en true.
+      secure: config.sessionCookieSecure,
     },
   };
 

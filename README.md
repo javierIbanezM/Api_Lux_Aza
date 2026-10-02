@@ -39,6 +39,16 @@ Puntos importantes:
   un servicio o una cuenta distinta. En el servidor usa la ruta UNC en `.env`:
   `LUX_LOG_PATH=\\servidor\comparticion\TLSI\LUX\lux.log.0` (y `LUX_MOBILE_LOG_PATH`), y que la
   cuenta con la que corre PM2 tenga permiso de lectura.
+- **Acceso a la interfaz web desde otros equipos**: `http://SRVNewWhales.zar.local:3000/almacen/login`
+  (equivale a `http://192.168.2.140:3000/almacen/login`; `localhost` solo vale en el propio
+  servidor). Hace falta abrir el puerto en el firewall del servidor (PowerShell como administrador):
+  `New-NetFirewallRule -DisplayName "API WHALES 3000" -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow -Profile Domain`.
+  Comprobacion desde otro PC: `Test-NetConnection SRVNewWhales.zar.local -Port 3000` y abrir
+  `http://SRVNewWhales.zar.local:3000/health/live`.
+- **Cookie de sesion por HTTP**: con `NODE_ENV=production` la cookie de sesion va marcada `secure` y
+  los navegadores la descartan por HTTP (el login no se mantiene). Mientras no haya HTTPS delante,
+  deja `SESSION_COOKIE_SECURE=false` en el `.env` del servidor (ya incluido en `.env.example`);
+  con HTTPS (proxy IIS/Nginx) ponlo en `true`.
 - **Si cambias `.env`**: `pm2 restart ecosystem.config.js --update-env`.
 - **No uses `pm2 restart all` / `pm2 delete all`** si en el servidor hay otras aplicaciones en PM2.
 - Si el watcher cae o se reinicia no pierde eventos: al volver relee desde la ultima posicion
