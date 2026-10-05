@@ -30,7 +30,8 @@ export type ActionEventType =
   | 'recepcionCerradaPicking'
   | 'recepcionLineaConfirmada'
   | 'rutaEnviada'
-  | 'rutaConsultada';
+  | 'rutaConsultada'
+  | 'decaGenerada';
 
 export interface DetectedEvent {
   type: ActionEventType;
@@ -254,6 +255,22 @@ const RULES: Rule[] = [
     build: (line) => {
       const idAlbaran = extractParam(line, 'identificador');
       return idAlbaran ? { type: 'recepcionLineaConfirmada', idAlbaran, rawLine: line } : null;
+    },
+  },
+  {
+    type: 'decaGenerada',
+    // Alguien pulsa "generar DECA" en una ruta: p_expRutas, accion GENERAR_DECA, con el id de la RUTA.
+    // El envio DECA se crea en ese mismo instante (su fechaCreacion coincide con la hora de esta
+    // linea, comprobado el 2026-10-05 con las rutas 14764 y 14792). Es el evento que abre el DECA:
+    // la consulta de la ruta en pantalla suele ser ANTERIOR y entonces aun no existe. p_expRutasDeca
+    // acepta ese mismo id (SELECT / SELECT_ENVIOS). `exec p_expRutas\b` no coincide con
+    // p_expRutasDeca ni p_expRutasDetalle.
+    procedure: 'p_expRutas',
+    actionParam: 'accion',
+    actionValues: ['GENERAR_DECA'],
+    build: (line) => {
+      const idRuta = extractParam(line, 'id');
+      return idRuta ? { type: 'decaGenerada', idRuta, usuario: extractParam(line, 'usuario'), rawLine: line } : null;
     },
   },
   {

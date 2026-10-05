@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach } from 'vitest';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createLogger } from '../../src/logging';
@@ -400,6 +400,66 @@ describe('watcher/jsonFileSink DECA de rutas', () => {
       expect(json.descargas[1].ficheros[0].fichero).toBe(doc.fileName); // apunta al mismo fichero
       expect(json.descargas[0].documentos).toBeUndefined(); // el contenido NO va dentro del JSON
       expect(json.descargas[2]).toMatchObject({ ok: false, status: 404, error: 'no hay documentos', ficheros: [] });
+    } finally {
+      rmSync(raiz, { recursive: true, force: true });
+    }
+  });
+
+  it('una ruta con VARIOS envios DECA (mismo nombre de PDF): cada fichero lleva el id y el estado de su envio y ninguno pisa a otro', async () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    try {
+      const sink = createJsonFileSink(join(raiz, 'events'), createLogger('error'), undefined, raiz);
+      const mk = (txt: string) => ({ fileName: 'Porte ruta RT1-AZA.pdf', bytes: txt.length, datos: Buffer.from(txt) });
+      const d = (shipmentId: string, variante: 'include-all' | 'simple', txt: string) => ({
+        shipmentId, variante, url: 'u', status: 200, ok: true, extension: 'json', bytes: 1, documentos: [mk(txt)],
+      });
+      await sink.onRutaDecaActualizada?.({
+        ...base,
+        consultadoEn: 't',
+        deca: [
+          { shipmentReference: 'RT1-AZA', estado: 'ANULADO', shipmentId: 'aaaaaaaa-1' } as never,
+          { shipmentReference: 'RT1-AZA', estado: 'ANULADO', shipmentId: 'bbbbbbbb-2' } as never,
+          { shipmentReference: 'RT1-AZA', estado: 'FIRMADO', shipmentId: 'cccccccc-3' } as never,
+        ],
+        // 3 envios, el mismo nombre de PDF y contenido distinto en cada uno; cada envio devuelve lo mismo en las 2 variantes.
+        descargas: [
+          d('aaaaaaaa-1', 'include-all', 'UNO'), d('aaaaaaaa-1', 'simple', 'UNO'),
+          d('bbbbbbbb-2', 'include-all', 'DOS'), d('bbbbbbbb-2', 'simple', 'DOS'),
+          d('cccccccc-3', 'include-all', 'TRES'), d('cccccccc-3', 'simple', 'TRES'),
+        ],
+      });
+      const pdfs = readdirSync(join(raiz, CARPETA_RUTA)).filter((n) => n.endsWith('.pdf')).sort();
+      expect(pdfs).toEqual([
+        'Porte ruta RT1-AZA [aaaaaaaa ANULADO].pdf',
+        'Porte ruta RT1-AZA [bbbbbbbb ANULADO].pdf',
+        'Porte ruta RT1-AZA [cccccccc FIRMADO].pdf',
+      ]);
+      expect(readFileSync(join(raiz, CARPETA_RUTA, pdfs[0] as string), 'utf-8')).toBe('UNO');
+      expect(readFileSync(join(raiz, CARPETA_RUTA, pdfs[1] as string), 'utf-8')).toBe('DOS');
+      expect(readFileSync(join(raiz, CARPETA_RUTA, pdfs[2] as string), 'utf-8')).toBe('TRES');
+    } finally {
+      rmSync(raiz, { recursive: true, force: true });
+    }
+  });
+
+  it('retira los PDF de pasadas anteriores que ya no corresponden (nombres antiguos), sin tocar nada si la descarga fallo', async () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    try {
+      const sink = createJsonFileSink(join(raiz, 'events'), createLogger('error'), undefined, raiz);
+      const dir = join(raiz, CARPETA_RUTA);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'Porte ruta RT1-AZA (simple).pdf'), 'VIEJO'); // esquema antiguo
+      const doc = { fileName: 'Porte ruta RT1-AZA.pdf', bytes: 4, datos: Buffer.from('NUEVO') };
+      const ok = { shipmentId: 'S1', variante: 'include-all' as const, url: 'u', status: 200, ok: true, extension: 'json', bytes: 1, documentos: [doc] };
+      const fallo = { shipmentId: 'S1', variante: 'include-all' as const, url: 'u', status: 401, ok: false, extension: 'bin', bytes: 0, error: 'sin permiso' };
+
+      // Descarga fallida: los ficheros existentes se conservan.
+      await sink.onRutaDecaActualizada?.({ ...base, consultadoEn: 't', deca: deca('ENVIADO'), descargas: [fallo] });
+      expect(readdirSync(dir).filter((n) => n.endsWith('.pdf'))).toEqual(['Porte ruta RT1-AZA (simple).pdf']);
+
+      // Descarga correcta: queda solo lo actual.
+      await sink.onRutaDecaActualizada?.({ ...base, consultadoEn: 't2', deca: deca('ENVIADO'), descargas: [ok] });
+      expect(readdirSync(dir).filter((n) => n.endsWith('.pdf'))).toEqual(['Porte ruta RT1-AZA.pdf']);
     } finally {
       rmSync(raiz, { recursive: true, force: true });
     }

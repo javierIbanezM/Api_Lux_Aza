@@ -6,7 +6,7 @@ import type { Logger } from '../logging';
 import type { ExpedicionesService } from '../services/expediciones';
 import type { RecepcionesService } from '../services/recepciones';
 import type { LuxClient } from '../lux/client';
-import type { RutasService } from '../services/rutas';
+import type { RutasService, RutaDecaConsulta } from '../services/rutas';
 import { DocutenTransientError, type DescargaDocumento, type DocutenDescargador } from '../docuten';
 import { limpiarFiltroRuta } from '../services/rutas';
 import { LuxAuthError, LuxHttpError, LuxNetworkError } from '../lux/errors';
@@ -14,7 +14,7 @@ import type { Expedicion, ExpedicionContenedor, ExpedicionLinea, Recepcion, Rece
 import { LogTailer } from './logTailer';
 import { matchActionLine, type ActionEventType, type DetectedEvent } from './actionPatterns';
 import { parseLogTime } from './logTime';
-import { RutasProcesadas, claveRuta } from './rutasProcesadas';
+import { RutasProcesadas } from './rutasProcesadas';
 import { resolverPedidosDeRuta } from './routeResolver';
 import type { WatcherConfig } from './watcherConfig';
 import { noopWatcherSink, type ExpedicionActualizada, type AlbaranActualizado, type WatcherSink } from './watcherSink';
@@ -22,7 +22,8 @@ import { noopWatcherSink, type ExpedicionActualizada, type AlbaranActualizado, t
 type PendingTarget =
   | { domain: 'expedicion'; idPedido?: string; pedido?: string; almacen?: string; terminal?: string }
   | { domain: 'recepcion'; idAlbaran?: string; albaran?: string; almacen?: string; terminal?: string }
-  | { domain: 'ruta'; ruta: string; almacen?: string; terminal?: string; eventoEn?: number };
+  | { domain: 'ruta'; ruta: string; almacen?: string; terminal?: string; eventoEn?: number }
+  | { domain: 'decaRuta'; idRuta: string; almacen?: string; terminal?: string; eventoEn?: number };
 
 interface PendingRefresh {
   target: PendingTarget;
@@ -34,6 +35,9 @@ interface PendingRefresh {
   /** Reintentos ya hechos por fallo transitorio (LUX/red/sink). */
   attempts: number;
 }
+
+/** Rutas/DECA que la revision de arranque deja en curso a la vez contra LUX. */
+const MAX_RUTAS_EN_ARRANQUE = 3;
 
 /** Cada cuanto como maximo se persiste la posicion de los logs (cuando todo esta procesado). */
 const COMMIT_INTERVAL_MS = 5_000;
@@ -55,6 +59,9 @@ function isTransientLuxError(err: unknown): boolean {
  *  texto de pedido/albaran (p.ej. una alta, id='0' todavia) usa ese. `undefined` = sin
  *  referencia resoluble en absoluto. */
 function keyFor(target: PendingTarget): string | undefined {
+  if (target.domain === 'decaRuta') {
+    return `decaid:${target.almacen ?? ''}:${target.idRuta}`;
+  }
   if (target.domain === 'ruta') {
     const ruta = limpiarFiltroRuta(target.ruta).toUpperCase();
     return ruta === '' ? undefined : `ruta:${target.almacen ?? ''}:${ruta}`;
@@ -100,6 +107,10 @@ function mergeTarget(previous: PendingTarget, incoming: PendingTarget): PendingT
     };
   }
   if (previous.domain === 'ruta' && incoming.domain === 'ruta') {
+    const eventoEn = Math.max(incoming.eventoEn ?? 0, previous.eventoEn ?? 0);
+    return { ...incoming, terminal: incoming.terminal ?? previous.terminal, eventoEn: eventoEn || undefined };
+  }
+  if (previous.domain === 'decaRuta' && incoming.domain === 'decaRuta') {
     const eventoEn = Math.max(incoming.eventoEn ?? 0, previous.eventoEn ?? 0);
     return { ...incoming, terminal: incoming.terminal ?? previous.terminal, eventoEn: eventoEn || undefined };
   }
@@ -212,7 +223,7 @@ export class LuxActionWatcher {
     this.arranqueEnCurso += 1;
     try {
       const marcas = await this.rutasProcesadas.cargar(this.config.rutasDecaDir);
-      const ultimas = new Map<string, { ruta: string; almacen?: string; t: number }>();
+      const ultimas = new Map<string, { target: PendingTarget; t: number }>();
       const ficheros: string[] = [];
       for (const base of [this.config.luxLogPath, this.config.luxMobileLogPath]) {
         // Primero el .1 (mas antiguo) y despues el .0: asi la consulta mas reciente de cada ruta gana.
@@ -230,11 +241,13 @@ export class LuxActionWatcher {
         try {
           const lector = createInterface({ input: createReadStream(fichero, { encoding: 'latin1' }), crlfDelay: Infinity });
           for await (const linea of lector) {
-            if (!linea.includes('p_expedicionesAza') || !linea.includes('@ruta=')) {
+            const candidata =
+              (linea.includes('p_expedicionesAza') && linea.includes('@ruta=')) || linea.includes('GENERAR_DECA');
+            if (!candidata) {
               continue;
             }
             const evento = matchActionLine(linea);
-            if (evento?.type !== 'rutaConsultada') {
+            if (evento?.type !== 'rutaConsultada' && evento?.type !== 'decaGenerada') {
               continue;
             }
             if (evento.usuario?.toLowerCase() === this.config.luxUsername.toLowerCase()) {
@@ -245,10 +258,14 @@ export class LuxActionWatcher {
               continue;
             }
             consultas += 1;
-            const clave = claveRuta(evento.almacen, evento.ruta as string);
+            const target: PendingTarget =
+              evento.type === 'decaGenerada'
+                ? { domain: 'decaRuta', idRuta: evento.idRuta as string, almacen: evento.almacen, eventoEn: t }
+                : { domain: 'ruta', ruta: evento.ruta as string, almacen: evento.almacen, eventoEn: t };
+            const clave = keyFor(target) as string;
             const previa = ultimas.get(clave);
             if (!previa || t >= previa.t) {
-              ultimas.set(clave, { ruta: evento.ruta as string, almacen: evento.almacen, t });
+              ultimas.set(clave, { target, t });
             }
           }
         } catch (err) {
@@ -266,11 +283,15 @@ export class LuxActionWatcher {
           yaProcesadas += 1;
           continue;
         }
-        this.scheduleRefresh({ domain: 'ruta', ruta: u.ruta, almacen: u.almacen, eventoEn: u.t }, 'rutaConsultada');
+        this.scheduleRefresh(u.target, u.target.domain === 'decaRuta' ? 'decaGenerada' : 'rutaConsultada');
         programadas += 1;
-        await new Promise((resolve) => setTimeout(resolve, 300)); // escalonado: no lanzar todas a la vez contra LUX
+        // Escalonado: como mucho MAX_RUTAS_EN_ARRANQUE rutas en curso a la vez (el listado de
+        // expediciones de LUX es pesado; lanzarlas todas juntas provoca tiempos agotados).
+        while (!this.parado && this.rutasEnCurso() >= MAX_RUTAS_EN_ARRANQUE) {
+          await new Promise((resolve) => setTimeout(resolve, 150));
+        }
       }
-      this.logger.info('Revision de arranque de consultas de ruta (lux.log.1 y lux.log.0)', {
+      this.logger.info('Revision de arranque de rutas/DECA (lux.log.1 y lux.log.0)', {
         operacion: 'watcher.rutasArranque',
         resultado: 'OK',
         ficherosLeidos: leidos.length,
@@ -317,6 +338,13 @@ export class LuxActionWatcher {
   }
 
   /** true si todo lo leido de los logs ya esta procesado (nada pendiente, en curso ni en reintento). */
+  /** Refrescos de ruta / DECA pendientes, en curso o esperando reintento. */
+  private rutasEnCurso(): number {
+    const esDeRuta = (k: string): boolean => k.startsWith('ruta:') || k.startsWith('decaid:');
+    const claves = new Set<string>([...this.pending.keys(), ...this.inFlight.keys(), ...this.retries.keys()]);
+    return [...claves].filter(esDeRuta).length;
+  }
+
   private isIdle(): boolean {
     return (
       this.pending.size === 0 &&
@@ -375,6 +403,18 @@ export class LuxActionWatcher {
 
       if (event.type === 'rutaEnviada') {
         void this.handleRutaEnviada(event);
+        continue;
+      }
+
+      if (event.type === 'decaGenerada') {
+        // GENERAR_DECA: el envio DECA se crea en ese instante. Se consulta por el id de la ruta.
+        const propio = event.usuario?.toLowerCase() === this.config.luxUsername.toLowerCase();
+        if (this.rutasService && !propio) {
+          this.scheduleRefresh(
+            { domain: 'decaRuta', idRuta: event.idRuta as string, almacen: event.almacen, terminal: event.terminal, eventoEn: parseLogTime(line) },
+            event.type,
+          );
+        }
         continue;
       }
 
@@ -565,30 +605,32 @@ export class LuxActionWatcher {
         });
         let sinkOk = true;
         for (const c of conDatos) {
-          const descargas = await this.descargarDocumentos(c.deca.map((d) => d.shipmentId));
-          const ok = await this.callSink(
-            () =>
-              this.sink.onRutaDecaActualizada?.({
-                numeroRuta: c.numeroRuta,
-                consultaOriginal: target.ruta,
-                almacen: target.almacen,
-                terminal: target.terminal,
-                motivos: motivosList,
-                consultadoEn: new Date().toISOString(),
-                consulta: c.consulta,
-                deca: c.deca,
-                envios: c.envios,
-                descargas,
-              }),
-            'ruta',
-            true,
-          );
-          sinkOk = sinkOk && ok;
+          sinkOk = (await this.guardarDeca(c, target.ruta, target.almacen, target.terminal, motivosList)) && sinkOk;
         }
         if (!sinkOk) {
           this.scheduleRetry(key, entry);
         } else {
           // Ruta procesada hasta esta consulta: la revision de arranque no la repetira.
+          this.rutasProcesadas?.marcar(key, target.eventoEn ?? Date.now());
+          await this.rutasProcesadas?.guardar().catch(() => undefined);
+        }
+      } else if (entry.target.domain === 'decaRuta') {
+        const target = entry.target;
+        const c = await (this.rutasService as RutasService).consultarDecaPorId(target.idRuta, target.almacen);
+        this.logger.info('DECA generado: consultado por el id de la ruta tras deteccion en log', {
+          operacion: 'watcher.decaGenerada',
+          resultado: 'OK',
+          idRuta: target.idRuta,
+          almacen: target.almacen,
+          conDeca: c ? 1 : 0,
+          motivos,
+          duracionMs: Date.now() - startedAt,
+        });
+        const sinkOk = c ? await this.guardarDeca(c, `GENERAR_DECA id=${target.idRuta}`, target.almacen, target.terminal, motivosList) : true;
+        if (!sinkOk) {
+          this.scheduleRetry(key, entry);
+        } else if (c) {
+          // Solo se da por procesado si el DECA existia; si no, la revision de arranque lo reintenta.
           this.rutasProcesadas?.marcar(key, target.eventoEn ?? Date.now());
           await this.rutasProcesadas?.guardar().catch(() => undefined);
         }
@@ -654,6 +696,34 @@ export class LuxActionWatcher {
       void this.refresh(key);
     }, delay);
     this.retries.set(key, entry);
+  }
+
+  /** Descarga los documentos del DECA y lo entrega al sink. Devuelve false si el sink fallo (se reintenta). */
+  private async guardarDeca(
+    c: RutaDecaConsulta,
+    consultaOriginal: string,
+    almacen: string | undefined,
+    terminal: string | undefined,
+    motivosList: ActionEventType[],
+  ): Promise<boolean> {
+    const descargas = await this.descargarDocumentos(c.deca.map((d) => d.shipmentId));
+    return this.callSink(
+      () =>
+        this.sink.onRutaDecaActualizada?.({
+          numeroRuta: c.numeroRuta,
+          consultaOriginal,
+          almacen,
+          terminal,
+          motivos: motivosList,
+          consultadoEn: new Date().toISOString(),
+          consulta: c.consulta,
+          deca: c.deca,
+          envios: c.envios,
+          descargas,
+        }),
+      'ruta',
+      true,
+    );
   }
 
   /** Descarga de Docuten los documentos de cada envio (shipmentId) del DECA de una ruta. Un fallo

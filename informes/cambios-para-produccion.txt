@@ -54,6 +54,27 @@ deploy/instalar-arranque-pm2.ps1 y la parte del README sobre PM2. Llevar el comm
    - Prueba real: 4 ficheros, 106 consultas, 39 rutas, 8 con DECA, 16 descargas Docuten OK; segundo
      arranque con el mismo estado: 0 llamadas.
 
+5d. EVENTO GENERAR_DECA (el que CREA el DECA)  (SIN COMMIT)
+   - Hallazgo: las consultas de ruta ocurren ANTES de que exista el DECA; el DECA se crea con
+     p_expRutas @accion='GENERAR_DECA' @id=<id ruta> (fechaCreacion = hora de esa linea). Hoy habia
+     36 lineas de ese tipo (~13 rutas, varias de ALMUSSAFES / otros usuarios) que no se registraban.
+   - Nuevo evento 'decaGenerada': p_expRutas GENERAR_DECA -> p_expRutasDeca SELECT/SELECT_ENVIOS con
+     {id} (reintenta 2 veces x 3 s) -> descarga Docuten -> carpeta de la ruta. Tambien en la
+     revision de arranque (lux.log.1 + .0), con el mismo registro anti-repeticion.
+   - src/watcher/actionPatterns.ts, luxActionWatcher.ts, watcherSink.ts, src/services/rutas/*;
+     tests (249 en verde). Prueba real: 25 GENERAR_DECA, 23 con DECA, 23 carpetas, 80 descargas OK.
+
+5e. CORRECCION DE FICHEROS PISADOS + CARGA DEL ARRANQUE  (SIN COMMIT)
+   - BUG corregido (jsonFileSink.ts): una ruta con VARIOS envios DECA (ANULADO + FIRMADO, AZA + PROP)
+     tiene PDF con el MISMO nombre y el 2o/3o se pisaban (RT00013671 perdio uno). Ahora, si hay mas de
+     un envio con documentos, cada PDF lleva [id8 ESTADO] ("Porte ruta X-AZA [7f4212df FIRMADO].pdf");
+     con un solo envio el nombre no cambia. Se retiran los PDF obsoletos de pasadas anteriores (solo si
+     la descarga actual fue correcta). 251 tests en verde.
+   - La revision de arranque deja como mucho 3 rutas en curso a la vez contra LUX (con todas a la
+     vez habia tiempos agotados de 10 s en el listado de expediciones). Prueba real: 75 rutas, 0 avisos.
+   - Para regenerar carpetas ya creadas con el esquema antiguo: borrar data/watcher-state/rutas-procesadas.json
+     y reiniciar el watcher (ya hecho en este PC y en el servidor de pruebas).
+
 6. DOCS Y OTROS: README.md, informes/mejoras-pendientes.txt, .gitignore (bruno/). La coleccion de
    Bruno (bruno/docuten/) NO se versiona: lleva la clave.
 

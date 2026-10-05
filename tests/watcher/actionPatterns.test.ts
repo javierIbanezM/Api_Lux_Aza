@@ -222,3 +222,21 @@ describe('watcher/actionPatterns: rutaConsultada (DECA de rutas)', () => {
     expect(matchActionLine(linea('%RT00013659_2026_COMPARTIDO%', "@USUARIO='MMartosL'", 'DELETE'))).toBeNull();
   });
 });
+
+describe('watcher/actionPatterns: decaGenerada (GENERAR_DECA)', () => {
+  const l = "05-oct-2026 14:48:51 INFO:   [] exec p_expRutas @accion='GENERAR_DECA',@almacen='SAGUNTO',@usuario='MMartosL',@id='14764'";
+
+  it('detecta "generar DECA" y extrae el id de la ruta, el almacen y el usuario', () => {
+    expect(matchActionLine(l)).toEqual({ type: 'decaGenerada', idRuta: '14764', usuario: 'MMartosL', almacen: 'SAGUNTO', rawLine: l, terminal: undefined });
+  });
+
+  it('no se confunde con otras acciones de p_expRutas ni con p_expRutasDeca / p_expRutasDetalle', () => {
+    expect(matchActionLine(l.replace('GENERAR_DECA', 'SELECT'))).toBeNull();
+    expect(matchActionLine(l.replace('p_expRutas ', 'p_expRutasDeca '))).toBeNull();
+    expect(matchActionLine(l.replace('p_expRutas ', 'p_expRutasDetalle '))).toBeNull();
+  });
+
+  it('sin id de ruta no genera evento', () => {
+    expect(matchActionLine(l.replace(",@id='14764'", ''))).toBeNull();
+  });
+});

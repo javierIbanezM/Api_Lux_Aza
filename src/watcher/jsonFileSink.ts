@@ -209,17 +209,36 @@ export function createJsonFileSink(
         await asegurarDir(carpetaRuta);
         const { descargas, ...resto } = result;
         const metadatos = [];
+        // Una ruta puede tener VARIOS envios DECA (p.ej. uno ANULADO y otro FIRMADO tras volver a
+        // generarlo, o AZA y PROP) y todos sus PDF se llaman igual ("Porte ruta <ruta>-AZA.pdf"):
+        // cuando hay mas de un envio con documentos, cada nombre lleva el id y el estado de SU envio,
+        // para que ninguno pise a otro.
+        const estadoDe = new Map(result.deca.map((x) => [x.shipmentId, x.estado]));
+        const enviosConDocumentos = new Set(
+          descargas.filter((d) => (d.documentos?.length ?? 0) > 0 || d.datos).map((d) => d.shipmentId),
+        );
+        const variosEnvios = enviosConDocumentos.size > 1;
+        const conSufijo = (nombre: string, sufijoNombre: string): string => {
+          const punto = nombre.lastIndexOf('.');
+          return punto > 0 ? `${nombre.slice(0, punto)}${sufijoNombre}${nombre.slice(punto)}` : `${nombre}${sufijoNombre}`;
+        };
         // Nombre -> huella de lo ya escrito en ESTA pasada: las dos variantes (include=all y simple)
         // suelen devolver el mismo documento y no se duplica el fichero.
         const escritos = new Map<string, string>();
-        const guardarFichero = async (nombreDeseado: string, datos: Buffer, variante: string): Promise<string> => {
+        const guardarFichero = async (nombreDeseado: string, datos: Buffer, variante: string, shipmentId: string): Promise<string> => {
           const huella = createHash('sha256').update(datos).digest('hex');
           let nombre = nombreFicheroSeguro(nombreDeseado);
-          const previo = escritos.get(nombre);
-          if (previo !== undefined && previo !== huella) {
-            // Mismo nombre pero contenido distinto: se distingue por la variante.
-            const punto = nombre.lastIndexOf('.');
-            nombre = punto > 0 ? `${nombre.slice(0, punto)} (${variante})${nombre.slice(punto)}` : `${nombre} (${variante})`;
+          if (variosEnvios) {
+            const estado = estadoDe.get(shipmentId);
+            nombre = conSufijo(nombre, ` [${shipmentId.slice(0, 8)}${estado ? ` ${estado}` : ''}]`);
+          }
+          // Mismo nombre pero contenido distinto (p.ej. una variante devuelve otro documento): se
+          // distingue por la variante y, si aun asi coincide, por un contador. Nunca se pisa nada.
+          if (escritos.has(nombre) && escritos.get(nombre) !== huella) {
+            nombre = conSufijo(nombre, ` (${variante})`);
+          }
+          for (let n = 2; escritos.has(nombre) && escritos.get(nombre) !== huella; n += 1) {
+            nombre = conSufijo(nombreFicheroSeguro(nombreDeseado), ` (${n})`);
           }
           if (escritos.get(nombre) !== huella) {
             await writeFile(join(carpetaRuta, nombre), datos);
@@ -238,13 +257,22 @@ export function createJsonFileSink(
           const ficheros: Array<{ fichero: string; documentType?: string; bytes: number }> = [];
           for (const [i, doc] of (documentos ?? []).entries()) {
             const nombre = doc.fileName || `docuten-${d.shipmentId}-${d.variante}-${i + 1}.pdf`;
-            ficheros.push({ fichero: await guardarFichero(nombre, doc.datos, d.variante), documentType: doc.documentType, bytes: doc.bytes });
+            ficheros.push({ fichero: await guardarFichero(nombre, doc.datos, d.variante, d.shipmentId), documentType: doc.documentType, bytes: doc.bytes });
           }
           if (datos) {
             const nombre = `docuten-${d.shipmentId}-${d.variante}.${d.extension}`;
-            ficheros.push({ fichero: await guardarFichero(nombre, datos, d.variante), bytes: datos.length });
+            ficheros.push({ fichero: await guardarFichero(nombre, datos, d.variante, d.shipmentId), bytes: datos.length });
           }
           metadatos.push({ ...meta, ficheros });
+        }
+        // La carpeta refleja el ultimo estado: se retiran los PDF de pasadas anteriores que ya no
+        // corresponden (p.ej. nombres de un esquema antiguo). Solo si esta pasada guardo algo.
+        if (escritos.size > 0) {
+          for (const existente of await readdir(carpetaRuta)) {
+            if (existente.toLowerCase().endsWith('.pdf') && !escritos.has(existente)) {
+              await rm(join(carpetaRuta, existente));
+            }
+          }
         }
         await borrarFicherosDe(sufijo, carpetaRuta);
         await guardar(sufijo, { ...resto, descargas: metadatos }, carpetaRuta);

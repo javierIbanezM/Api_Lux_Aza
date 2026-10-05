@@ -78,7 +78,7 @@ export interface RutaDecaActualizada {
    *  ruta y cada llamada (procedimiento, accion, parametros, almacen, numero de filas). */
   consulta: {
     filtroLog: string;
-    metodoResolucion: 'listado' | 'listado-enviado' | 'filtro-literal';
+    metodoResolucion: 'listado' | 'listado-enviado' | 'filtro-literal' | 'id-ruta';
     llamadas: LlamadaApi[];
   };
   /** p_expRutasDeca accion=SELECT. */

@@ -66,6 +66,12 @@ Cuando alguien filtra por una ruta concreta en la pantalla de expediciones (log 
 watcher toma la ruta y el almacen de esa linea, resuelve el nombre EXACTO de la ruta (el listado de
 expediciones devuelve el campo `ruta` completo) y consulta `p_expRutasDeca` con `SELECT` y
 `SELECT_ENVIOS`. Si la ruta tiene DECA o envios, guarda `data/watcher-rutas-deca/<fecha>--rutadeca-<ruta>.json`
+**Evento `GENERAR_DECA`** (`p_expRutas @accion='GENERAR_DECA' ... @id=<id de la ruta>`): es el que CREA el DECA.
+La consulta de la ruta en pantalla suele ser anterior y entonces el DECA aun no existe, asi que este evento
+es el que lo registra de verdad. El watcher consulta `p_expRutasDeca` por ese id (SELECT y SELECT_ENVIOS;
+reintenta unos segundos si aun no existe), descarga los documentos de Docuten y guarda la carpeta de la ruta.
+Tambien lo recupera al arrancar leyendo `lux.log.1` y `lux.log.0`.
+
 **Al arrancar**, el watcher tambien lee `lux.log.1` y `lux.log.0` completos (de LUX y LUX_mobile),
 busca las consultas de ruta y procesa la ultima de cada ruta, aunque ocurrieran cuando no estaba en marcha
 con esta regla. No repite lo ya hecho: `data/watcher-state/rutas-procesadas.json` recuerda, por ruta, hasta

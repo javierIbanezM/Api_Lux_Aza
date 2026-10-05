@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AuthManager } from '../../src/auth';
@@ -827,6 +827,17 @@ describe('watcher/LuxActionWatcher', () => {
     expect(resultado.descargas.map((d: { variante: string; ok: boolean }) => [d.variante, d.ok])).toEqual([['include-all', true], ['simple', false]]);
   });
 
+  /** Espera a que rutas-procesadas.json tenga `n` rutas anotadas (se escribe DESPUES de entregar al sink). */
+  const esperarRegistro = async (n: number): Promise<void> => {
+    await waitUntil(() => {
+      try {
+        return Object.keys(JSON.parse(readFileSync(join(config.stateDir, 'rutas-procesadas.json'), 'utf-8')).rutas ?? {}).length >= n;
+      } catch {
+        return false;
+      }
+    }, 8000);
+  };
+
   describe('revision de arranque: lee lux.log.1 y lux.log.0 y procesa las consultas de ruta ya ocurridas', () => {
     const linea = (hora: string, ruta: string, usuario: string): string =>
       `05-oct-2026 ${hora} INFO:   [] exec p_expedicionesAza @extraMostrar='',@estado='',@tipo='',@generarDeca='',@fechaCerrado_FIN='',@ruta='%${ruta}%',@ALMACEN='SAGUNTO',@ACCION='SELECT',@USUARIO='${usuario}'\n`;
@@ -867,6 +878,7 @@ describe('watcher/LuxActionWatcher', () => {
       const resumen = logLines.find((l) => l.operacion === 'watcher.rutasArranque');
       expect(resumen).toMatchObject({ consultasEncontradas: 3, rutasDistintas: 2, programadas: 2, yaProcesadas: 0 });
       expect(llamadas.filter((c) => c.startsWith('SELECT:'))).toHaveLength(2);
+      await esperarRegistro(2);
 
       // Segundo arranque con el MISMO estado: ya estan hechas -> no se repite ninguna.
       await watcher.stop();
@@ -891,6 +903,7 @@ describe('watcher/LuxActionWatcher', () => {
       watcher = buildWatcher({ onRutaDecaActualizada: sink1 });
       watcher.start();
       await waitUntil(() => sink1.mock.calls.length >= 1, 8000);
+      await esperarRegistro(1);
       await watcher.stop();
 
       // Mientras estaba parado alguien vuelve a consultar la ruta (varias horas despues).
@@ -902,6 +915,71 @@ describe('watcher/LuxActionWatcher', () => {
       await waitUntil(() => sink2.mock.calls.length >= 1, 8000);
 
       expect(sink2.mock.calls[0]?.[0].numeroRuta).toBe('RT_AAA_EXACTA');
+    });
+  });
+
+  describe('GENERAR_DECA: el DECA se registra cuando se genera, aunque la ruta nunca se consultara en pantalla', () => {
+    const lineaGenerar = (hora: string, id: string, usuario = 'MPeiroZ'): string =>
+      `05-oct-2026 ${hora} INFO:   [] exec p_expRutas @accion='GENERAR_DECA',@almacen='ALMUSSAFES',@usuario='${usuario}',@id='${id}'\n`;
+    const mockPorId = (llamadas: string[]) =>
+      mock.updateOptions({
+        onProc: (proc, body) => {
+          if (proc === 'p_expRutasDeca') {
+            llamadas.push(`${body.accion}:${body.id ?? body.numeroRuta}`);
+            return { status: 200, body: body.accion === 'SELECT' ? [{ shipmentReference: `RT${body.id}_2026_X-AZA`, estado: 'ENVIADO', shipmentId: `SH-${body.id}` }] : [] };
+          }
+          return { status: 404, body: { mensaje: 'no mockeado' } };
+        },
+      });
+
+    it('en vivo: consulta p_expRutasDeca por el id de la ruta y entrega el DECA al sink (con almacen y documentos)', async () => {
+      const llamadas: string[] = [];
+      mockPorId(llamadas);
+      const onRutaDecaActualizada = vi.fn();
+      const descargarDocumentos = vi.fn(async (shipmentId: string) => [
+        { shipmentId, variante: 'include-all' as const, url: 'u', status: 200, ok: true, extension: 'json', bytes: 1 },
+      ]);
+      const appConfig = buildTestConfig({ luxBaseUrl: baseUrl });
+      const luxClient = new LuxClient(appConfig, new AuthManager(appConfig, createLogger('error')), createLogger('error'));
+      const exp = new ExpedicionesService(luxClient);
+      watcher = new LuxActionWatcher(config, luxClient, exp, new RecepcionesService(luxClient), createLogger('debug'), { onRutaDecaActualizada }, new RutasService(luxClient, exp), { descargarDocumentos });
+      watcher.start();
+      await waitUntil(() => existsSync(join(config.stateDir, 'lux.state.json')) && existsSync(join(config.stateDir, 'lux-mobile.state.json')));
+
+      appendFileSync(luxLogPath, lineaGenerar('14:48:51', '14764'));
+
+      await waitUntil(() => onRutaDecaActualizada.mock.calls.length > 0, 10000);
+      const r = onRutaDecaActualizada.mock.calls[0]?.[0];
+      expect(r).toMatchObject({ numeroRuta: 'RT14764_2026_X', almacen: 'ALMUSSAFES', motivos: ['decaGenerada'], consultaOriginal: 'GENERAR_DECA id=14764' });
+      expect(descargarDocumentos).toHaveBeenCalledWith('SH-14764');
+      expect(llamadas).toContain('SELECT:14764');
+    });
+
+    it('al arrancar: lee lux.log.1 y lux.log.0, procesa el ultimo GENERAR_DECA de cada ruta y un segundo arranque no repite', async () => {
+      const llamadas: string[] = [];
+      mockPorId(llamadas);
+      writeFileSync(join(dir, 'lux.log.1'), lineaGenerar('13:43:42', '14791') + lineaGenerar('14:00:00', '14791'));
+      writeFileSync(luxLogPath, lineaGenerar('15:26:45', '14802', 'JmartinezA'));
+
+      const sink1 = vi.fn();
+      watcher = buildWatcher({ onRutaDecaActualizada: sink1 });
+      watcher.start();
+      await waitUntil(() => sink1.mock.calls.length >= 2, 10000);
+      expect(sink1.mock.calls.map((c) => c[0].numeroRuta).sort()).toEqual(['RT14791_2026_X', 'RT14802_2026_X']);
+      expect(llamadas.filter((c) => c.startsWith('SELECT:'))).toHaveLength(2); // 14791 solo una vez (ultimo evento)
+      await esperarRegistro(2);
+
+      await watcher.stop();
+      logLines.length = 0;
+      llamadas.length = 0;
+      const sink2 = vi.fn();
+      watcher = buildWatcher({ onRutaDecaActualizada: sink2 });
+      watcher.start();
+      await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.rutasArranque'), 8000);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(logLines.find((l) => l.operacion === 'watcher.rutasArranque')).toMatchObject({ rutasDistintas: 2, programadas: 0, yaProcesadas: 2 });
+      expect(sink2).not.toHaveBeenCalled();
+      expect(llamadas).toEqual([]);
     });
   });
 

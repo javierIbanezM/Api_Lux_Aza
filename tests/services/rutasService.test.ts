@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { RutasService, limpiarFiltroRuta } from '../../src/services/rutas';
+import { RutasService, limpiarFiltroRuta, numeroRutaDe } from '../../src/services/rutas';
 import type { LuxClient } from '../../src/lux/client';
 import type { ExpedicionesService } from '../../src/services/expediciones';
 
@@ -19,6 +19,45 @@ function crear(opts: {
 }
 
 describe('services/RutasService', () => {
+  it('numeroRutaDe quita el sufijo -AZA / -PROP de la referencia del envio', () => {
+    expect(numeroRutaDe('RT00013659_2026_COMPARTIDO-PROP', '1')).toBe('RT00013659_2026_COMPARTIDO');
+    expect(numeroRutaDe('RT00013615_2026_COMP MAMENTRANS007 S.L. -AZA', '1')).toBe('RT00013615_2026_COMP MAMENTRANS007 S.L.');
+    expect(numeroRutaDe(undefined, '14764')).toBe('ruta-id-14764');
+  });
+
+  it('consultarDecaPorId usa el id de la ruta (SELECT y SELECT_ENVIOS) y devuelve nombre, datos y la consulta hecha', async () => {
+    const { servicio, callProc } = crear({
+      proc: (_p, accion) => (accion === 'SELECT' ? [{ shipmentReference: 'RT1_2026_X-AZA', estado: 'ENVIADO' }] : []),
+    });
+    const r = await servicio.consultarDecaPorId('14764', 'SAGUNTO', 0);
+    expect(r?.numeroRuta).toBe('RT1_2026_X');
+    expect(r?.deca).toHaveLength(1);
+    expect(r?.consulta).toMatchObject({ filtroLog: 'GENERAR_DECA id=14764', metodoResolucion: 'id-ruta' });
+    expect(r?.consulta.llamadas.map((x) => [x.accion, x.parametros])).toEqual([['SELECT', { id: '14764' }], ['SELECT_ENVIOS', { id: '14764' }]]);
+    expect(callProc).toHaveBeenCalledWith('p_expRutasDeca', 'SELECT', { id: '14764' }, expect.objectContaining({ almacen: 'SAGUNTO' }));
+  });
+
+  it('consultarDecaPorId reintenta si el DECA aun no existe (el log se escribe al EMPEZAR la accion) y lo encuentra', async () => {
+    let llamadas = 0;
+    const { servicio } = crear({
+      proc: (_p, accion) => {
+        if (accion === 'SELECT') {
+          llamadas += 1;
+          return llamadas < 3 ? '' : [{ shipmentReference: 'RT2-PROP', estado: 'ENVIADO' }]; // aparece al 3er intento
+        }
+        return '';
+      },
+    });
+    const r = await servicio.consultarDecaPorId('1', 'SAGUNTO', 1, 2);
+    expect(r?.numeroRuta).toBe('RT2');
+    expect(llamadas).toBe(3);
+  });
+
+  it('consultarDecaPorId devuelve undefined si tras los reintentos sigue sin haber DECA', async () => {
+    const { servicio } = crear({ proc: () => '' });
+    await expect(servicio.consultarDecaPorId('1', 'SAGUNTO', 1, 1)).resolves.toBeUndefined();
+  });
+
   it('limpiarFiltroRuta quita comodines y espacios', () => {
     expect(limpiarFiltroRuta('%RT00013615_2026_COMP %')).toBe('RT00013615_2026_COMP');
   });

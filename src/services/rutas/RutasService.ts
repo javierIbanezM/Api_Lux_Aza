@@ -3,7 +3,7 @@ import type { LlamadaApi, RutaDeca, RutaDecaEnvio } from '../../lux/models';
 import type { ExpedicionesService } from '../expediciones';
 
 /** Como se llego al nombre exacto de la ruta a partir del filtro del log. */
-export type MetodoResolucion = 'listado' | 'listado-enviado' | 'filtro-literal';
+export type MetodoResolucion = 'listado' | 'listado-enviado' | 'filtro-literal' | 'id-ruta';
 
 /** Resolucion del filtro de ruta: nombres exactos + las llamadas que hicieron falta. */
 export interface ResolucionRuta {
@@ -28,6 +28,12 @@ export interface RutaDecaConsulta {
 /** Quita comodines y espacios sobrantes de un filtro de ruta ('%RT0001_2026_X %' -> 'RT0001_2026_X'). */
 export function limpiarFiltroRuta(filtro: string): string {
   return filtro.replace(/%/g, '').trim();
+}
+
+/** Nombre de la ruta a partir de la referencia del envio (`<ruta>-AZA` / `<ruta>-PROP`). */
+export function numeroRutaDe(shipmentReference: string | undefined, idRuta: string): string {
+  const nombre = (shipmentReference ?? '').replace(/-(AZA|PROP)$/i, '').trim();
+  return nombre === '' ? `ruta-id-${idRuta}` : nombre;
 }
 
 /** LUX devuelve cuerpo vacio ("") en vez de [] cuando no hay filas en algunas acciones. */
@@ -101,6 +107,43 @@ export class RutasService {
       return { numerosRuta: enviados, metodo: 'listado-enviado', llamadas };
     }
     return { numerosRuta: limpio === '' ? [] : [limpio], metodo: 'filtro-literal', llamadas };
+  }
+
+  /**
+   * DECA de una ruta a partir de su ID (el que lleva `p_expRutas GENERAR_DECA` en el log), sin
+   * resolver nombres. El log se escribe al EMPEZAR la accion, asi que el DECA puede tardar un
+   * instante en existir: si aun no hay filas se reintenta (`reintentos` veces, `esperaMs` entre
+   * medias). Devuelve `undefined` si tras los reintentos no hay DECA ni envios.
+   */
+  async consultarDecaPorId(
+    idRuta: string,
+    almacen?: string,
+    esperaMs: number = 3000,
+    reintentos: number = 2,
+  ): Promise<RutaDecaConsulta | undefined> {
+    const llamar = async (accion: 'SELECT' | 'SELECT_ENVIOS'): Promise<{ filas: Array<Record<string, string>>; llamada: LlamadaApi }> => {
+      const rows = await this.luxClient.callProc('p_expRutasDeca', accion, { id: idRuta }, {
+        operacion: `rutas.${accion === 'SELECT' ? 'obtenerDeca' : 'obtenerEnvios'}PorId`,
+        almacen,
+      });
+      const filas = comoFilas<Record<string, string>>(rows);
+      return { filas, llamada: { procedimiento: 'p_expRutasDeca', accion, parametros: { id: idRuta }, almacen, filas: filas.length } };
+    };
+    for (let intento = 0; intento <= reintentos; intento += 1) {
+      const [deca, envios] = await Promise.all([llamar('SELECT'), llamar('SELECT_ENVIOS')]);
+      if (deca.filas.length > 0 || envios.filas.length > 0) {
+        return {
+          numeroRuta: numeroRutaDe(deca.filas[0]?.shipmentReference, idRuta),
+          deca: deca.filas as RutaDeca[],
+          envios: envios.filas as RutaDecaEnvio[],
+          consulta: { filtroLog: `GENERAR_DECA id=${idRuta}`, metodoResolucion: 'id-ruta', llamadas: [deca.llamada, envios.llamada] },
+        };
+      }
+      if (intento < reintentos) {
+        await new Promise((resolve) => setTimeout(resolve, esperaMs));
+      }
+    }
+    return undefined;
   }
 
   /** Resuelve el filtro y consulta SELECT + SELECT_ENVIOS de cada ruta resultante. */
