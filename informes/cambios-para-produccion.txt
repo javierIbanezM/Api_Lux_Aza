@@ -1,0 +1,77 @@
+CAMBIOS DE HOY (2026-10-05) PARA LLEVAR AL PROYECTO DE PRODUCCION
+Todo esta en el commit 2c9f0ea ("fix: anadir disparador evento y descarga pdf docuten").
+
+AVISO: ese commit arrastra tambien 3 cosas del 2-oct que estaban sin commitear y SON necesarias en
+produccion: package.json y package-lock.json (better-sqlite3 12.4.1, requerido con Node 24),
+deploy/instalar-arranque-pm2.ps1 y la parte del README sobre PM2. Llevar el commit entero
+(git cherry-pick 2c9f0ea, o pull) lo incluye todo.
+
+1. EVENTO NUEVO: CONSULTA DE UNA RUTA
+   - Detecta p_expedicionesAza, @ACCION='SELECT', con @ruta='%RT...%'; extrae ruta y almacen.
+   - No cuenta: ruta vacia, '%%', 'NO ASIGNADA'. Ignora al usuario tecnico (apiUser) para evitar bucles.
+   - src/watcher/actionPatterns.ts, src/watcher/luxActionWatcher.ts
+
+2. CONSULTA A LUX: p_expRutasDeca (SELECT y SELECT_ENVIOS)
+   - Resuelve el numeroRuta EXACTO a partir del filtro (listado de expediciones), porque LUX no
+     admite nombre parcial ni comodines en p_expRutasDeca.
+   - Nuevos: src/lux/models/rutaDeca.ts, src/services/rutas/{RutasService.ts,index.ts}
+   - Modificados: src/lux/procedures/whitelist.ts, src/lux/models/index.ts, src/services/index.ts,
+     src/app.ts
+
+3. JSON EN CARPETA PROPIA, UNA POR RUTA
+   - data/watcher-rutas-deca/<ruta>/  con el JSON (consulta a la API + datos + metadatos de las
+     descargas) y los ficheros descargados.
+   - src/watcher/jsonFileSink.ts, watcherSink.ts, watcherConfig.ts, scripts/watchLuxLogs.ts
+
+4. DESCARGA DE DOCUMENTOS DE DOCUTEN (eCMR)
+   - GET {base}/shipments/{shipmentId}/documents/download[?include=all], cabecera X-API-KEY.
+   - La respuesta es JSON {documents:[{file_name, content(base64), document_type}]}: se decodifica y
+     se guarda el PDF con su nombre ("Porte ruta <ruta>-AZA.pdf"); si las dos llamadas devuelven lo
+     mismo se guarda una sola vez.
+   - Nuevos: src/docuten/{DocutenClient.ts,index.ts}
+   - Variables nuevas (.env.example): DOCUTEN_API_KEY, DOCUTEN_BASE_URL.
+
+5. TESTS: tests/docuten/, tests/services/, tests/lux/whitelist.test.ts,
+   tests/watcher/{actionPatterns,jsonFileSink,luxActionWatcher}.test.ts   (228 en verde)
+
+5b. DE MOMENTO NO SE BORRAN LOS JSON FINALES (cambio posterior, mismo dia, SIN COMMIT)
+   - Expedicion ENVIADO y preaviso CERRADO ya NO borran su JSON: se conserva el mas reciente por
+     pedido/albaran. El mecanismo de borrado sigue disponible: WATCHER_DELETE_FINAL_JSON=true.
+   - src/watcher/jsonFileSink.ts (opciones.borrarFinales), watcherConfig.ts, scripts/watchLuxLogs.ts,
+     .env.example; tests/watcher/jsonFileSink.test.ts (231 en verde).
+   - Efecto: los JSON de pedidos enviados/cerrados se acumulan en data/watcher-events sin purga.
+     Los que ya se habian borrado NO se recuperan (solo se crean con el siguiente evento del pedido).
+
+5c. REVISION DE ARRANQUE DE LAS RUTAS (lux.log.1 + lux.log.0)  (SIN COMMIT)
+   - Al arrancar lee lux.log.1 y lux.log.0 (LUX y LUX_mobile) completos, busca consultas de ruta y
+     procesa la ULTIMA de cada ruta (DECA + descarga de documentos). Solo rutas (opcion A).
+   - No repite: registro data/watcher-state/rutas-procesadas.json (por ruta, hasta que consulta se
+     proceso); la primera vez se inicializa con los JSON ya existentes en watcher-rutas-deca.
+     Tolerancia de 2 min entre el reloj de LUX y el del equipo. Arranque escalonado (300 ms/ruta).
+   - Nuevos: src/watcher/logTime.ts, src/watcher/rutasProcesadas.ts
+     Modificados: src/watcher/luxActionWatcher.ts
+     Tests: tests/watcher/logTime.test.ts, rutasProcesadas.test.ts, luxActionWatcher.test.ts (240 en verde)
+   - Prueba real: 4 ficheros, 106 consultas, 39 rutas, 8 con DECA, 16 descargas Docuten OK; segundo
+     arranque con el mismo estado: 0 llamadas.
+
+6. DOCS Y OTROS: README.md, informes/mejoras-pendientes.txt, .gitignore (bruno/). La coleccion de
+   Bruno (bruno/docuten/) NO se versiona: lleva la clave.
+
+.ENV DE PRODUCCION (se edita alli; el .env NO se copia)
+   DOCUTEN_API_KEY=<clave de produccion de Docuten>
+   DOCUTEN_BASE_URL=https://ecmr.docuten.com/api/v1
+   WATCHER_RUTAS_DECA_DIR=data/watcher-rutas-deca     (opcional)
+   (LUX_USERNAME ya existe y se usa para ignorar las consultas del propio watcher.)
+
+PASOS EN PRODUCCION
+   1. Traer el commit (git pull / cherry-pick) y editar el .env.
+   2. npm ci   (cambia better-sqlite3)   ->  npm run build
+   3. pm2 restart api-whales-watcher   (o pm2 start ecosystem.config.js + pm2 save)
+   4. Comprobar: pm2 logs api-whales-watcher sin errores; al consultar una ruta con DECA en la
+      pantalla de expediciones debe aparecer su carpeta en data/watcher-rutas-deca/.
+
+PENDIENTE / LIMITES
+   - El POD (justificante de entrega) solo existira cuando el envio este entregado; hoy se descarga
+     unicamente cuando alguien consulta la ruta. Falta revisar periodicamente los envios no entregados.
+   - SELECT_ENVIOS devuelve vacio en las rutas probadas; su forma real no se ha visto.
+   - Los JSON/PDF de rutas no se purgan solos.

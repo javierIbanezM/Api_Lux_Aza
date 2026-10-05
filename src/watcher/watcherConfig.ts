@@ -28,6 +28,11 @@ export interface WatcherConfig {
   /** Carpeta aparte donde se guardan los JSON del DECA de rutas (p_expRutasDeca): cada uno lleva
    *  la consulta hecha a la API y los datos devueltos. Por defecto data/watcher-rutas-deca. */
   rutasDecaDir: string;
+  /** Si true, al llegar a estado final (expedicion ENVIADO / preaviso CERRADO) se borra el JSON del
+   *  pedido/albaran. Por defecto FALSE: de momento los JSON finales se conservan (hasta que haya un
+   *  destino definitivo / BD que confirme el guardado antes de borrar). WATCHER_DELETE_FINAL_JSON=true
+   *  lo reactiva. */
+  borrarJsonFinales: boolean;
   /** Clave de la API de Docuten eCMR (DOCUTEN_API_KEY, cabecera X-API-KEY). Sin ella no se
    *  descargan los documentos de los envios DECA (el resto del watcher funciona igual). */
   docutenApiKey: string | undefined;
@@ -65,6 +70,20 @@ function optionalInt(name: string, raw: NodeJS.ProcessEnv, defaultValue: number)
   return parsed;
 }
 
+function optionalBool(name: string, raw: NodeJS.ProcessEnv, defaultValue: boolean): boolean {
+  const value = raw[name]?.trim().toLowerCase();
+  if (value === undefined || value === '') {
+    return defaultValue;
+  }
+  if (value === 'true' || value === '1') {
+    return true;
+  }
+  if (value === 'false' || value === '0') {
+    return false;
+  }
+  throw new WatcherConfigError(`La variable de entorno ${name} debe ser true o false`);
+}
+
 function optionalString(name: string, raw: NodeJS.ProcessEnv, defaultValue: string): string {
   const value = raw[name];
   return value === undefined || value.trim() === '' ? defaultValue : value;
@@ -81,6 +100,7 @@ export function loadWatcherConfig(raw: NodeJS.ProcessEnv = process.env): Watcher
     retryDelayMs: optionalInt('WATCHER_RETRY_MS', raw, 30000),
     jsonEventsDir: optionalString('WATCHER_JSON_DIR', raw, 'data/watcher-events'),
     rutasDecaDir: optionalString('WATCHER_RUTAS_DECA_DIR', raw, 'data/watcher-rutas-deca'),
+    borrarJsonFinales: optionalBool('WATCHER_DELETE_FINAL_JSON', raw, false),
     docutenApiKey: raw.DOCUTEN_API_KEY?.trim() || undefined,
     docutenBaseUrl: optionalString('DOCUTEN_BASE_URL', raw, 'https://ecmr-sandbox.docuten.com/api/v1').replace(/\/+$/, ''),
     stateDir: optionalString('WATCHER_STATE_DIR', raw, 'data/watcher-state'),

@@ -116,7 +116,7 @@ describe('watcher/jsonFileSink', () => {
 
   it('al llegar a estado ENVIADO, borra todos los JSON previos del pedido y no guarda uno nuevo', async () => {
     dir = mkdtempSync(join(tmpdir(), 'watcher-json-'));
-    const sink = createJsonFileSink(dir, createLogger('error'));
+    const sink = createJsonFileSink(dir, createLogger('error'), undefined, undefined, { borrarFinales: true });
 
     const base: ExpedicionActualizada = {
       idPedido: '11122',
@@ -140,7 +140,7 @@ describe('watcher/jsonFileSink', () => {
 
   it('ENVIADO de un pedido no afecta a los JSON de otro pedido distinto', async () => {
     dir = mkdtempSync(join(tmpdir(), 'watcher-json-'));
-    const sink = createJsonFileSink(dir, createLogger('error'));
+    const sink = createJsonFileSink(dir, createLogger('error'), undefined, undefined, { borrarFinales: true });
 
     await sink.onExpedicionActualizada?.({
       idPedido: '11122',
@@ -194,7 +194,7 @@ describe('watcher/jsonFileSink', () => {
 
   it('ENVIADO sin ficheros previos en disco no falla (carpeta ya vacia o inexistente)', async () => {
     dir = join(mkdtempSync(join(tmpdir(), 'watcher-json-')), 'no-creada-aun');
-    const sink = createJsonFileSink(dir, createLogger('error'));
+    const sink = createJsonFileSink(dir, createLogger('error'), undefined, undefined, { borrarFinales: true });
 
     await expect(
       sink.onExpedicionActualizada?.({
@@ -233,7 +233,7 @@ describe('watcher/jsonFileSink estados finales y destino', () => {
 
   it('recepcion CERRADO borra los JSON previos y no guarda uno nuevo (sin destino)', async () => {
     dir = mkdtempSync(join(tmpdir(), 'watcher-json-'));
-    const sink = createJsonFileSink(dir, createLogger('error'));
+    const sink = createJsonFileSink(dir, createLogger('error'), undefined, undefined, { borrarFinales: true });
     await sink.onAlbaranActualizado?.(albaran('PENDIENTE'));
     expect(readdirSync(dir)).toHaveLength(1);
     await sink.onAlbaranActualizado?.(albaran('CERRADO'));
@@ -247,7 +247,7 @@ describe('watcher/jsonFileSink estados finales y destino', () => {
       guardarExpedicion: async (r: ExpedicionActualizada) => void guardados.push(`exp:${r.estado}`),
       guardarAlbaran: async (r: AlbaranActualizado) => void guardados.push(`alb:${r.estado}`),
     };
-    const sink = createJsonFileSink(dir, createLogger('error'), destino);
+    const sink = createJsonFileSink(dir, createLogger('error'), destino, undefined, { borrarFinales: true });
     await sink.onAlbaranActualizado?.(albaran('PENDIENTE'));
     await sink.onExpedicionActualizada?.(expedicion('ASIGNADO'));
     expect(guardados).toEqual([]); // no final: el destino no interviene
@@ -267,7 +267,7 @@ describe('watcher/jsonFileSink estados finales y destino', () => {
         throw new Error('BD caida');
       },
     };
-    const sink = createJsonFileSink(dir, createLogger('error'), destino);
+    const sink = createJsonFileSink(dir, createLogger('error'), destino, undefined, { borrarFinales: true });
     await sink.onAlbaranActualizado?.(albaran('PENDIENTE'));
     await expect(sink.onAlbaranActualizado?.(albaran('CERRADO'))).resolves.toBeUndefined();
     const ficheros = readdirSync(dir);
@@ -420,6 +420,59 @@ describe('watcher/jsonFileSink DECA de rutas', () => {
       expect(readFileSync(join(raiz, CARPETA_RUTA, 'Porte (simple).pdf'), 'utf-8')).toBe('BBBB');
     } finally {
       rmSync(raiz, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('watcher/jsonFileSink: por defecto NO se borra por estado final (conserva el mas reciente)', () => {
+  it('expedicion ENVIADO: se guarda el JSON y se conserva; un nuevo evento reemplaza solo al anterior del mismo pedido', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    try {
+      const sink = createJsonFileSink(dir, createLogger('error'));
+      const base: ExpedicionActualizada = { idPedido: '1', pedido: 'EXP1', estado: 'ASIGNADO', motivos: ['expedicionCabeceraActualizada'], lineas: [], contenedores: [] };
+      await sink.onExpedicionActualizada?.(base);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await sink.onExpedicionActualizada?.({ ...base, estado: 'ENVIADO', motivos: ['expedicionCerradaOficina'] });
+
+      const ficheros = readdirSync(dir);
+      expect(ficheros).toHaveLength(1); // uno por pedido
+      expect(JSON.parse(readFileSync(join(dir, ficheros[0] as string), 'utf-8')).estado).toBe('ENVIADO'); // el mas reciente
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('preaviso CERRADO: tambien se conserva el JSON', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    try {
+      const sink = createJsonFileSink(dir, createLogger('error'));
+      const base: AlbaranActualizado = { idAlbaran: '7', albaran: 'REC1', estado: 'PENDIENTE', motivos: ['recepcionCerradaPicking'], lineas: [], hus: [] };
+      await sink.onAlbaranActualizado?.(base);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await sink.onAlbaranActualizado?.({ ...base, estado: 'CERRADO' });
+
+      const ficheros = readdirSync(dir);
+      expect(ficheros).toHaveLength(1);
+      expect(JSON.parse(readFileSync(join(dir, ficheros[0] as string), 'utf-8')).estado).toBe('CERRADO');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('con destino configurado pero sin borrado por estado final, el destino no interviene y el JSON se conserva', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    try {
+      const guardados: string[] = [];
+      const destino = {
+        guardarExpedicion: async (r: ExpedicionActualizada) => void guardados.push(`exp:${r.estado}`),
+        guardarAlbaran: async (r: AlbaranActualizado) => void guardados.push(`alb:${r.estado}`),
+      };
+      const sink = createJsonFileSink(dir, createLogger('error'), destino);
+      await sink.onExpedicionActualizada?.({ idPedido: '1', pedido: 'EXP1', estado: 'ENVIADO', motivos: ['expedicionCerradaOficina'], lineas: [], contenedores: [] });
+      expect(guardados).toEqual([]);
+      expect(readdirSync(dir)).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

@@ -46,6 +46,7 @@ describe('watcher/LuxActionWatcher', () => {
     retryDelayMs: 60_000,
     stateDir: '',
     rutasDecaDir: '',
+    borrarJsonFinales: false,
     docutenApiKey: undefined,
     docutenBaseUrl: 'http://docuten.invalid/api/v1',
     jsonEventsDir: '', // no usado en estos tests: LuxActionWatcher no conoce jsonFileSink, solo WatcherSink
@@ -824,6 +825,84 @@ describe('watcher/LuxActionWatcher', () => {
     const resultado = onRutaDecaActualizada.mock.calls[0]?.[0];
     expect(resultado.descargas).toHaveLength(2);
     expect(resultado.descargas.map((d: { variante: string; ok: boolean }) => [d.variante, d.ok])).toEqual([['include-all', true], ['simple', false]]);
+  });
+
+  describe('revision de arranque: lee lux.log.1 y lux.log.0 y procesa las consultas de ruta ya ocurridas', () => {
+    const linea = (hora: string, ruta: string, usuario: string): string =>
+      `05-oct-2026 ${hora} INFO:   [] exec p_expedicionesAza @extraMostrar='',@estado='',@tipo='',@generarDeca='',@fechaCerrado_FIN='',@ruta='%${ruta}%',@ALMACEN='SAGUNTO',@ACCION='SELECT',@USUARIO='${usuario}'\n`;
+
+    const mockRutas = (llamadas: string[]) =>
+      mock.updateOptions({
+        onProc: (proc, body) => {
+          if (proc === 'p_expedicionesAza') {
+            const exacta = String(body.ruta).includes('AAA') ? 'RT_AAA_EXACTA' : 'RT_BBB_EXACTA';
+            return { status: 200, body: [{ id: '1', pedido: 'P', ruta: exacta }] };
+          }
+          if (proc === 'p_expRutasDeca') {
+            llamadas.push(`${body.accion}:${body.numeroRuta}`);
+            return { status: 200, body: body.accion === 'SELECT' ? [{ shipmentReference: `${body.numeroRuta}-AZA`, estado: 'ENVIADO' }] : [] };
+          }
+          return { status: 404, body: { mensaje: 'no mockeado' } };
+        },
+      });
+
+    it('procesa la ULTIMA consulta de cada ruta de ambos ficheros, ignora al usuario tecnico, y un segundo arranque NO repite nada', async () => {
+      const llamadas: string[] = [];
+      mockRutas(llamadas);
+      // Antes de arrancar: consultas YA ocurridas, repartidas entre lux.log.1 (antiguo) y lux.log.0.
+      writeFileSync(
+        join(dir, 'lux.log.1'),
+        linea('10:00:00', 'RT00001_AAA', 'MMartosL') + linea('10:05:00', 'RT00003_CCC', 'apiUser'),
+      );
+      writeFileSync(luxLogPath, linea('11:00:00', 'RT00001_AAA', 'MMartosL') + linea('11:30:00', 'RT00002_BBB', 'JCRedolarS'));
+
+      const sink1 = vi.fn();
+      watcher = buildWatcher({ onRutaDecaActualizada: sink1 });
+      watcher.start();
+      await waitUntil(() => sink1.mock.calls.length >= 2, 8000);
+      await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.rutasArranque'), 8000);
+
+      const numeros = sink1.mock.calls.map((c) => c[0].numeroRuta).sort();
+      expect(numeros).toEqual(['RT_AAA_EXACTA', 'RT_BBB_EXACTA']); // una por ruta (la de apiUser no cuenta)
+      const resumen = logLines.find((l) => l.operacion === 'watcher.rutasArranque');
+      expect(resumen).toMatchObject({ consultasEncontradas: 3, rutasDistintas: 2, programadas: 2, yaProcesadas: 0 });
+      expect(llamadas.filter((c) => c.startsWith('SELECT:'))).toHaveLength(2);
+
+      // Segundo arranque con el MISMO estado: ya estan hechas -> no se repite ninguna.
+      await watcher.stop();
+      llamadas.length = 0;
+      logLines.length = 0;
+      const sink2 = vi.fn();
+      watcher = buildWatcher({ onRutaDecaActualizada: sink2 });
+      watcher.start();
+      await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.rutasArranque'), 8000);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      expect(logLines.find((l) => l.operacion === 'watcher.rutasArranque')).toMatchObject({ rutasDistintas: 2, programadas: 0, yaProcesadas: 2 });
+      expect(sink2).not.toHaveBeenCalled();
+      expect(llamadas).toEqual([]);
+    });
+
+    it('una consulta NUEVA posterior a lo ya procesado si se procesa en el siguiente arranque', async () => {
+      const llamadas: string[] = [];
+      mockRutas(llamadas);
+      writeFileSync(luxLogPath, linea('11:00:00', 'RT00001_AAA', 'MMartosL'));
+      const sink1 = vi.fn();
+      watcher = buildWatcher({ onRutaDecaActualizada: sink1 });
+      watcher.start();
+      await waitUntil(() => sink1.mock.calls.length >= 1, 8000);
+      await watcher.stop();
+
+      // Mientras estaba parado alguien vuelve a consultar la ruta (varias horas despues).
+      appendFileSync(luxLogPath, linea('15:30:00', 'RT00001_AAA', 'MMartosL'));
+      logLines.length = 0;
+      const sink2 = vi.fn();
+      watcher = buildWatcher({ onRutaDecaActualizada: sink2 });
+      watcher.start();
+      await waitUntil(() => sink2.mock.calls.length >= 1, 8000);
+
+      expect(sink2.mock.calls[0]?.[0].numeroRuta).toBe('RT_AAA_EXACTA');
+    });
   });
 
   it('ignora las consultas de ruta hechas por el propio watcher (usuario tecnico): sin bucle', async () => {

@@ -58,6 +58,10 @@ function sanitizar(valor: string): string {
  * actual). Cuando una expedicion (`ENVIADO`) o una recepcion (`CERRADO`) llega a su estado final
  * ya no va a haber mas cambios, asi que se borran sus JSON y no se guarda ninguno nuevo.
  *
+ * Con `opciones.borrarFinales = true` (WATCHER_DELETE_FINAL_JSON, por defecto FALSE) ese borrado se
+ * activa; con false los estados finales se tratan como cualquier otro: se conserva el JSON mas
+ * reciente del pedido/albaran (de momento no se borra nada por estado final).
+ *
  * Si se pasa un `destino` (base de datos), el estado final se vuelca primero ahi y los JSON solo
  * se borran cuando el destino confirma el guardado sin errores. Si falla, se conserva el JSON mas
  * actual y se registra `watcher.jsonSink.destinoError`. Sin `destino` (situacion actual, mientras
@@ -69,7 +73,9 @@ export function createJsonFileSink(
   destino?: DestinoPersistencia,
   /** Carpeta aparte para los JSON del DECA de rutas (por defecto, la misma que `dir`). */
   rutasDecaDir: string = dir,
+  opciones: { borrarFinales?: boolean } = {},
 ): WatcherSink {
+  const borrarFinales = opciones.borrarFinales ?? false;
   const dirsListos = new Map<string, Promise<void>>();
   const asegurarDir = (carpeta: string): Promise<void> => {
     let listo = dirsListos.get(carpeta);
@@ -182,14 +188,14 @@ export function createJsonFileSink(
       procesar(
         `expedicion-${sanitizar(result.pedido)}`,
         result,
-        Boolean(result.estado && ESTADOS_FINALES_EXPEDICION.has(result.estado)),
+        borrarFinales && Boolean(result.estado && ESTADOS_FINALES_EXPEDICION.has(result.estado)),
         () => (destino as DestinoPersistencia).guardarExpedicion(result),
       ),
     onAlbaranActualizado: (result: AlbaranActualizado) =>
       procesar(
         `recepcion-${sanitizar(result.albaran)}`,
         result,
-        Boolean(result.estado && ESTADOS_FINALES_RECEPCION.has(result.estado)),
+        borrarFinales && Boolean(result.estado && ESTADOS_FINALES_RECEPCION.has(result.estado)),
         () => (destino as DestinoPersistencia).guardarAlbaran(result),
       ),
     // DECA de una ruta consultada: un JSON por ruta (el mas reciente), sin estado final.

@@ -1,4 +1,7 @@
+import { createReadStream } from 'node:fs';
+import { access } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import type { Logger } from '../logging';
 import type { ExpedicionesService } from '../services/expediciones';
 import type { RecepcionesService } from '../services/recepciones';
@@ -10,6 +13,8 @@ import { LuxAuthError, LuxHttpError, LuxNetworkError } from '../lux/errors';
 import type { Expedicion, ExpedicionContenedor, ExpedicionLinea, Recepcion, RecepcionHU, RecepcionLinea } from '../lux/models';
 import { LogTailer } from './logTailer';
 import { matchActionLine, type ActionEventType, type DetectedEvent } from './actionPatterns';
+import { parseLogTime } from './logTime';
+import { RutasProcesadas, claveRuta } from './rutasProcesadas';
 import { resolverPedidosDeRuta } from './routeResolver';
 import type { WatcherConfig } from './watcherConfig';
 import { noopWatcherSink, type ExpedicionActualizada, type AlbaranActualizado, type WatcherSink } from './watcherSink';
@@ -17,7 +22,7 @@ import { noopWatcherSink, type ExpedicionActualizada, type AlbaranActualizado, t
 type PendingTarget =
   | { domain: 'expedicion'; idPedido?: string; pedido?: string; almacen?: string; terminal?: string }
   | { domain: 'recepcion'; idAlbaran?: string; albaran?: string; almacen?: string; terminal?: string }
-  | { domain: 'ruta'; ruta: string; almacen?: string; terminal?: string };
+  | { domain: 'ruta'; ruta: string; almacen?: string; terminal?: string; eventoEn?: number };
 
 interface PendingRefresh {
   target: PendingTarget;
@@ -95,7 +100,8 @@ function mergeTarget(previous: PendingTarget, incoming: PendingTarget): PendingT
     };
   }
   if (previous.domain === 'ruta' && incoming.domain === 'ruta') {
-    return { ...incoming, terminal: incoming.terminal ?? previous.terminal };
+    const eventoEn = Math.max(incoming.eventoEn ?? 0, previous.eventoEn ?? 0);
+    return { ...incoming, terminal: incoming.terminal ?? previous.terminal, eventoEn: eventoEn || undefined };
   }
   return incoming;
 }
@@ -131,6 +137,11 @@ export class LuxActionWatcher {
   private readonly rutaRetries = new Map<string, ReturnType<typeof setTimeout>>();
   /** Resoluciones de ruta en curso. */
   private activeRutas = 0;
+  /** > 0 mientras la revision de rutas de lux.log.1 / lux.log.0 al arrancar esta en curso. */
+  private arranqueEnCurso = 0;
+  private parado = false;
+  /** Rutas ya procesadas (para no repetirlas al revisar los logs al arrancar). */
+  private readonly rutasProcesadas?: RutasProcesadas;
   private lastCommitAt = 0;
   private readonly luxTailer: LogTailer;
   private readonly mobileTailer: LogTailer;
@@ -162,6 +173,9 @@ export class LuxActionWatcher {
       join(config.stateDir, 'lux-mobile.state.json'),
       false,
     );
+    if (rutasService) {
+      this.rutasProcesadas = new RutasProcesadas(join(config.stateDir, 'rutas-procesadas.json'));
+    }
   }
 
   start(): void {
@@ -180,11 +194,107 @@ export class LuxActionWatcher {
       void this.mobileTailer.poll();
       void this.commitIfIdle();
     }, this.config.pollIntervalMs);
+    void this.revisarRutasAlArrancar();
+  }
+
+  /**
+   * Al arrancar, lee `lux.log.1` y `lux.log.0` (de LUX y de LUX_mobile) COMPLETOS buscando consultas
+   * de ruta (evento `rutaConsultada`) y procesa la ultima de cada ruta, para no depender de que el
+   * watcher estuviera en marcha con esta regla cuando ocurrieron. NO repite lo ya hecho: el registro
+   * `rutas-procesadas.json` recuerda, por ruta, hasta que consulta se proceso (y se inicializa con
+   * los JSON que ya hay en `watcher-rutas-deca`). Solo rutas: pedidos y albaranes siguen
+   * recuperandose por la posicion guardada de cada log.
+   */
+  private async revisarRutasAlArrancar(): Promise<void> {
+    if (!this.rutasService || !this.rutasProcesadas) {
+      return;
+    }
+    this.arranqueEnCurso += 1;
+    try {
+      const marcas = await this.rutasProcesadas.cargar(this.config.rutasDecaDir);
+      const ultimas = new Map<string, { ruta: string; almacen?: string; t: number }>();
+      const ficheros: string[] = [];
+      for (const base of [this.config.luxLogPath, this.config.luxMobileLogPath]) {
+        // Primero el .1 (mas antiguo) y despues el .0: asi la consulta mas reciente de cada ruta gana.
+        ficheros.push(...(/\.0$/.test(base) ? [base.replace(/\.0$/, '.1'), base] : [base]));
+      }
+      let consultas = 0;
+      const leidos: string[] = [];
+      for (const fichero of ficheros) {
+        try {
+          await access(fichero);
+        } catch {
+          continue; // no existe (p.ej. aun no hay .1)
+        }
+        leidos.push(fichero);
+        try {
+          const lector = createInterface({ input: createReadStream(fichero, { encoding: 'latin1' }), crlfDelay: Infinity });
+          for await (const linea of lector) {
+            if (!linea.includes('p_expedicionesAza') || !linea.includes('@ruta=')) {
+              continue;
+            }
+            const evento = matchActionLine(linea);
+            if (evento?.type !== 'rutaConsultada') {
+              continue;
+            }
+            if (evento.usuario?.toLowerCase() === this.config.luxUsername.toLowerCase()) {
+              continue; // consulta del propio watcher
+            }
+            const t = parseLogTime(linea);
+            if (t === undefined) {
+              continue;
+            }
+            consultas += 1;
+            const clave = claveRuta(evento.almacen, evento.ruta as string);
+            const previa = ultimas.get(clave);
+            if (!previa || t >= previa.t) {
+              ultimas.set(clave, { ruta: evento.ruta as string, almacen: evento.almacen, t });
+            }
+          }
+        } catch (err) {
+          this.handleTailError(err, 'arranque', fichero);
+        }
+      }
+
+      let programadas = 0;
+      let yaProcesadas = 0;
+      for (const [clave, u] of ultimas) {
+        if (this.parado) {
+          break;
+        }
+        if (this.rutasProcesadas.yaProcesada(clave, u.t)) {
+          yaProcesadas += 1;
+          continue;
+        }
+        this.scheduleRefresh({ domain: 'ruta', ruta: u.ruta, almacen: u.almacen, eventoEn: u.t }, 'rutaConsultada');
+        programadas += 1;
+        await new Promise((resolve) => setTimeout(resolve, 300)); // escalonado: no lanzar todas a la vez contra LUX
+      }
+      this.logger.info('Revision de arranque de consultas de ruta (lux.log.1 y lux.log.0)', {
+        operacion: 'watcher.rutasArranque',
+        resultado: 'OK',
+        ficherosLeidos: leidos.length,
+        consultasEncontradas: consultas,
+        rutasDistintas: ultimas.size,
+        yaProcesadas,
+        programadas,
+        marcasPrevias: marcas,
+      });
+    } catch (err) {
+      this.logger.warn('No se pudo revisar las consultas de ruta al arrancar', {
+        operacion: 'watcher.rutasArranque',
+        resultado: 'ERROR',
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      this.arranqueEnCurso -= 1;
+    }
   }
 
   /** Para el watcher. Si no queda nada pendiente confirma la posicion de los logs; lo pendiente
    *  se descarta SIN confirmar, asi que se releera y reprocesara en el siguiente arranque. */
   async stop(): Promise<void> {
+    this.parado = true;
     if (this.pollHandle) {
       clearInterval(this.pollHandle);
     }
@@ -213,7 +323,8 @@ export class LuxActionWatcher {
       this.inFlight.size === 0 &&
       this.retries.size === 0 &&
       this.rutaRetries.size === 0 &&
-      this.activeRutas === 0
+      this.activeRutas === 0 &&
+      this.arranqueEnCurso === 0
     );
   }
 
@@ -273,7 +384,7 @@ export class LuxActionWatcher {
         const propio = event.usuario?.toLowerCase() === this.config.luxUsername.toLowerCase();
         if (this.rutasService && !propio) {
           this.scheduleRefresh(
-            { domain: 'ruta', ruta: event.ruta as string, almacen: event.almacen, terminal: event.terminal },
+            { domain: 'ruta', ruta: event.ruta as string, almacen: event.almacen, terminal: event.terminal, eventoEn: parseLogTime(line) },
             event.type,
           );
         }
@@ -476,6 +587,10 @@ export class LuxActionWatcher {
         }
         if (!sinkOk) {
           this.scheduleRetry(key, entry);
+        } else {
+          // Ruta procesada hasta esta consulta: la revision de arranque no la repetira.
+          this.rutasProcesadas?.marcar(key, target.eventoEn ?? Date.now());
+          await this.rutasProcesadas?.guardar().catch(() => undefined);
         }
       } else {
         const result = await this.refreshRecepcion(entry.target);

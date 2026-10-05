@@ -13,6 +13,7 @@
  * red con los logs no esta disponible), no debe tirar abajo la API principal, y viceversa.
  */
 import 'dotenv/config';
+import { mkdirSync } from 'node:fs';
 import { loadConfig } from '../src/config';
 import { loadWatcherConfig } from '../src/watcher/watcherConfig';
 import { createLogger } from '../src/logging';
@@ -43,7 +44,14 @@ function bootstrap(): void {
   // individual en disco (ver src/watcher/jsonFileSink.ts), para poder revisar exactamente que
   // datos llegan antes de decidir el mapeo de campos. Carpeta configurable via WATCHER_JSON_DIR
   // (por defecto "data/watcher-events").
-  const sink = createJsonFileSink(watcherConfig.jsonEventsDir, logger, undefined, watcherConfig.rutasDecaDir);
+  // Las carpetas de salida se crean al arrancar (no al guardar el primer JSON), para que existan y se
+  // puedan ver desde el primer momento aunque aun no haya llegado ningun evento.
+  for (const carpeta of [watcherConfig.jsonEventsDir, watcherConfig.rutasDecaDir, watcherConfig.stateDir]) {
+    mkdirSync(carpeta, { recursive: true });
+  }
+  const sink = createJsonFileSink(watcherConfig.jsonEventsDir, logger, undefined, watcherConfig.rutasDecaDir, {
+    borrarFinales: watcherConfig.borrarJsonFinales,
+  });
   // Descarga de documentos de Docuten (eCMR): solo si hay DOCUTEN_API_KEY en el .env.
   const docutenClient = watcherConfig.docutenApiKey
     ? new DocutenClient(watcherConfig.docutenBaseUrl, watcherConfig.docutenApiKey)

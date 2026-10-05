@@ -6,6 +6,11 @@ Todo lo de este fichero esta SIN aplicar. Los cambios ya aplicados (sin cambio f
 al final, en "YA APLICADO".
 
 ======================================================================
+NOTA 2026-10-05: de momento NO se borran los JSON en estado final (expedicion ENVIADO / preaviso
+CERRADO): se conserva el mas reciente por pedido (WATCHER_DELETE_FINAL_JSON=false por defecto). Los
+puntos de este informe que hablan de "borrar al llegar a estado final" quedan en pausa hasta que se
+decida reactivarlo (o exista la BD). Pendiente: purga por antiguedad de los JSON acumulados.
+
 PENDIENTE (ordenado por prioridad)
 ======================================================================
 

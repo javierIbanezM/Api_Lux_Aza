@@ -66,6 +66,11 @@ Cuando alguien filtra por una ruta concreta en la pantalla de expediciones (log 
 watcher toma la ruta y el almacen de esa linea, resuelve el nombre EXACTO de la ruta (el listado de
 expediciones devuelve el campo `ruta` completo) y consulta `p_expRutasDeca` con `SELECT` y
 `SELECT_ENVIOS`. Si la ruta tiene DECA o envios, guarda `data/watcher-rutas-deca/<fecha>--rutadeca-<ruta>.json`
+**Al arrancar**, el watcher tambien lee `lux.log.1` y `lux.log.0` completos (de LUX y LUX_mobile),
+busca las consultas de ruta y procesa la ultima de cada ruta, aunque ocurrieran cuando no estaba en marcha
+con esta regla. No repite lo ya hecho: `data/watcher-state/rutas-procesadas.json` recuerda, por ruta, hasta
+que consulta se proceso (la primera vez se inicializa con los JSON que ya hay en `watcher-rutas-deca`).
+Solo rutas: pedidos y albaranes se recuperan por la posicion guardada de cada log.
 (carpeta propia, `WATCHER_RUTAS_DECA_DIR`; una SUBCARPETA por ruta con el nombre de la ruta, con el JSON mas
 reciente dentro y los ficheros descargados de Docuten, ver mas abajo). Cada JSON lleva la consulta hecha
 a la API (`consulta.llamadas`: procedimiento, accion, parametros, almacen y filas de cada llamada) y los
