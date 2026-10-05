@@ -28,6 +28,11 @@ export interface WatcherConfig {
   /** Carpeta aparte donde se guardan los JSON del DECA de rutas (p_expRutasDeca): cada uno lleva
    *  la consulta hecha a la API y los datos devueltos. Por defecto data/watcher-rutas-deca. */
   rutasDecaDir: string;
+  /** Cuantos ficheros del log de LUX (oficina) revisa al arrancar la busqueda de eventos del DECA
+   *  (consultas de ruta y GENERAR_DECA): `lux.log.0` + los `n-1` rotados mas recientes. Por defecto
+   *  3 (lux.log.0, .1 y .2). SOLO afecta a esa revision de arranque del DECA; la lectura normal del log
+   *  y la recuperacion de pedidos/albaranes no cambian. */
+  revisarFicherosDeca: number;
   /** Si true, al llegar a estado final (expedicion ENVIADO / preaviso CERRADO) se borra el JSON del
    *  pedido/albaran. Por defecto FALSE: de momento los JSON finales se conservan (hasta que haya un
    *  destino definitivo / BD que confirme el guardado antes de borrar). WATCHER_DELETE_FINAL_JSON=true
@@ -100,6 +105,7 @@ export function loadWatcherConfig(raw: NodeJS.ProcessEnv = process.env): Watcher
     retryDelayMs: optionalInt('WATCHER_RETRY_MS', raw, 30000),
     jsonEventsDir: optionalString('WATCHER_JSON_DIR', raw, 'data/watcher-events'),
     rutasDecaDir: optionalString('WATCHER_RUTAS_DECA_DIR', raw, 'data/watcher-rutas-deca'),
+    revisarFicherosDeca: optionalInt('WATCHER_REVISAR_FICHEROS_DECA', raw, 3),
     borrarJsonFinales: optionalBool('WATCHER_DELETE_FINAL_JSON', raw, false),
     docutenApiKey: raw.DOCUTEN_API_KEY?.trim() || undefined,
     docutenBaseUrl: optionalString('DOCUTEN_BASE_URL', raw, 'https://ecmr-sandbox.docuten.com/api/v1').replace(/\/+$/, ''),

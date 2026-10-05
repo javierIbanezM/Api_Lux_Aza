@@ -77,6 +77,9 @@ busca las consultas de ruta y procesa la ultima de cada ruta, aunque ocurrieran 
 con esta regla. No repite lo ya hecho: `data/watcher-state/rutas-procesadas.json` recuerda, por ruta, hasta
 que consulta se proceso (la primera vez se inicializa con los JSON que ya hay en `watcher-rutas-deca`).
 Solo rutas: pedidos y albaranes se recuperan por la posicion guardada de cada log.
+Ficheros revisados: del log de LUX, `WATCHER_REVISAR_FICHEROS_DECA` (por defecto 3: `lux.log.0`, `.1` y `.2`);
+LUX rota cada pocas horas en un dia de mucha actividad, asi que sube el valor si el watcher puede estar parado
+mucho rato (cada fichero son ~10 MB). Del log de LUX_mobile solo `.1` y `.0`.
 (carpeta propia, `WATCHER_RUTAS_DECA_DIR`; una SUBCARPETA por ruta con el nombre de la ruta, con el JSON mas
 reciente dentro y los ficheros descargados de Docuten, ver mas abajo). Cada JSON lleva la consulta hecha
 a la API (`consulta.llamadas`: procedimiento, accion, parametros, almacen y filas de cada llamada) y los

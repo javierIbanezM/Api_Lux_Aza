@@ -225,10 +225,15 @@ export class LuxActionWatcher {
       const marcas = await this.rutasProcesadas.cargar(this.config.rutasDecaDir);
       const ultimas = new Map<string, { target: PendingTarget; t: number }>();
       const ficheros: string[] = [];
-      for (const base of [this.config.luxLogPath, this.config.luxMobileLogPath]) {
-        // Primero el .1 (mas antiguo) y despues el .0: asi la consulta mas reciente de cada ruta gana.
-        ficheros.push(...(/\.0$/.test(base) ? [base.replace(/\.0$/, '.1'), base] : [base]));
-      }
+      // Del log de LUX (oficina, donde estan las consultas de ruta y GENERAR_DECA) se revisan
+      // `revisarFicherosDeca` ficheros (.0 + los rotados mas recientes); del de LUX_mobile solo .1 y .0.
+      const conRotados = (base: string, total: number): string[] =>
+        /\.0$/.test(base)
+          ? [...Array.from({ length: Math.max(total, 1) - 1 }, (_, i) => base.replace(/\.0$/, `.${Math.max(total, 1) - 1 - i}`)), base]
+          : [base];
+      // Orden: del mas antiguo (.N) al mas reciente (.0): asi la ultima consulta de cada ruta gana.
+      ficheros.push(...conRotados(this.config.luxLogPath, this.config.revisarFicherosDeca));
+      ficheros.push(...conRotados(this.config.luxMobileLogPath, 2));
       let consultas = 0;
       const leidos: string[] = [];
       for (const fichero of ficheros) {

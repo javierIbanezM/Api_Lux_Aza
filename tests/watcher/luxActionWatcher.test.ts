@@ -46,6 +46,7 @@ describe('watcher/LuxActionWatcher', () => {
     retryDelayMs: 60_000,
     stateDir: '',
     rutasDecaDir: '',
+    revisarFicherosDeca: 3,
     borrarJsonFinales: false,
     docutenApiKey: undefined,
     docutenBaseUrl: 'http://docuten.invalid/api/v1',
@@ -953,6 +954,39 @@ describe('watcher/LuxActionWatcher', () => {
       expect(r).toMatchObject({ numeroRuta: 'RT14764_2026_X', almacen: 'ALMUSSAFES', motivos: ['decaGenerada'], consultaOriginal: 'GENERAR_DECA id=14764' });
       expect(descargarDocumentos).toHaveBeenCalledWith('SH-14764');
       expect(llamadas).toContain('SELECT:14764');
+    });
+
+    it('la revision de arranque del DECA lee tambien lux.log.2 (revisarFicherosDeca=3) pero NO con 2', async () => {
+      const llamadas: string[] = [];
+      mockPorId(llamadas);
+      writeFileSync(join(dir, 'lux.log.2'), lineaGenerar('08:01:36', '14781')); // evento antiguo, solo en el .2
+      writeFileSync(join(dir, 'lux.log.1'), lineaGenerar('13:43:42', '14791'));
+      writeFileSync(luxLogPath, '');
+      const valorOriginal = config.revisarFicherosDeca;
+      try {
+        // Con 2 ficheros (.0 y .1) el evento del .2 queda fuera.
+        config.revisarFicherosDeca = 2;
+        const sinDos = vi.fn();
+        watcher = buildWatcher({ onRutaDecaActualizada: sinDos });
+        watcher.start();
+        await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.rutasArranque'), 8000);
+        await waitUntil(() => sinDos.mock.calls.length >= 1, 8000);
+        expect(sinDos.mock.calls.map((c) => c[0].numeroRuta)).toEqual(['RT14791_2026_X']);
+        await watcher.stop();
+
+        // Con 3 entra tambien el .2 (registro nuevo: el estado anterior no marca el 14781).
+        rmSync(join(config.stateDir, 'rutas-procesadas.json'), { force: true });
+        config.revisarFicherosDeca = 3;
+        logLines.length = 0;
+        const conTres = vi.fn();
+        watcher = buildWatcher({ onRutaDecaActualizada: conTres });
+        watcher.start();
+        await waitUntil(() => conTres.mock.calls.length >= 2, 10000);
+        expect(conTres.mock.calls.map((c) => c[0].numeroRuta).sort()).toEqual(['RT14781_2026_X', 'RT14791_2026_X']);
+        expect(logLines.find((l) => l.operacion === 'watcher.rutasArranque')).toMatchObject({ ficherosLeidos: 4 }); // LUX .2 + .1 + .0, y el .0 de LUX_mobile
+      } finally {
+        config.revisarFicherosDeca = valorOriginal;
+      }
     });
 
     it('al arrancar: lee lux.log.1 y lux.log.0, procesa el ultimo GENERAR_DECA de cada ruta y un segundo arranque no repite', async () => {

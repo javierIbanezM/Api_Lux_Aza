@@ -75,6 +75,16 @@ deploy/instalar-arranque-pm2.ps1 y la parte del README sobre PM2. Llevar el comm
    - Para regenerar carpetas ya creadas con el esquema antiguo: borrar data/watcher-state/rutas-procesadas.json
      y reiniciar el watcher (ya hecho en este PC y en el servidor de pruebas).
 
+5f. REVISION DE ARRANQUE DEL DECA SOBRE MAS FICHEROS  (SIN COMMIT)
+   - Motivo: el servidor tenia 22 carpetas y este PC 27: 5 DECA (PRUEBADECA, PRUEBADECA2, RT00013487,
+     RT00013671, RT00013677) se generaron antes de las 11:30 y LUX rotó el log a las 17:19, asi que
+     sus lineas GENERAR_DECA quedaron en lux.log.2, fuera de la ventana (.0 y .1) del arranque de las 17:27.
+     Ademas, de 13:16 a 17:27 el servidor ejecutaba codigo sin la regla GENERAR_DECA.
+   - Nueva variable WATCHER_REVISAR_FICHEROS_DECA (por defecto 3 = lux.log.0, .1 y .2 del log de LUX;
+     LUX_mobile sigue con .1 y .0). SOLO afecta a la revision de arranque del DECA.
+   - src/watcher/watcherConfig.ts, luxActionWatcher.ts, .env.example; tests (252 en verde).
+   - Prueba real: 5 ficheros leidos, 29 GENERAR_DECA, los 5 recuperados, 27 carpetas, 0 avisos.
+
 6. DOCS Y OTROS: README.md, informes/mejoras-pendientes.txt, .gitignore (bruno/). La coleccion de
    Bruno (bruno/docuten/) NO se versiona: lleva la clave.
 
