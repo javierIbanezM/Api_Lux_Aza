@@ -3,6 +3,9 @@ import type { Logger } from '../logging';
 import type { ExpedicionesService } from '../services/expediciones';
 import type { RecepcionesService } from '../services/recepciones';
 import type { LuxClient } from '../lux/client';
+import type { RutasService } from '../services/rutas';
+import { DocutenTransientError, type DescargaDocumento, type DocutenDescargador } from '../docuten';
+import { limpiarFiltroRuta } from '../services/rutas';
 import { LuxAuthError, LuxHttpError, LuxNetworkError } from '../lux/errors';
 import type { Expedicion, ExpedicionContenedor, ExpedicionLinea, Recepcion, RecepcionHU, RecepcionLinea } from '../lux/models';
 import { LogTailer } from './logTailer';
@@ -13,7 +16,8 @@ import { noopWatcherSink, type ExpedicionActualizada, type AlbaranActualizado, t
 
 type PendingTarget =
   | { domain: 'expedicion'; idPedido?: string; pedido?: string; almacen?: string; terminal?: string }
-  | { domain: 'recepcion'; idAlbaran?: string; albaran?: string; almacen?: string; terminal?: string };
+  | { domain: 'recepcion'; idAlbaran?: string; albaran?: string; almacen?: string; terminal?: string }
+  | { domain: 'ruta'; ruta: string; almacen?: string; terminal?: string };
 
 interface PendingRefresh {
   target: PendingTarget;
@@ -35,6 +39,7 @@ const MAX_RETRY_DELAY_MS = 5 * 60_000;
  *  da por perdido, se reintenta. Un error funcional/de datos no se reintenta (daria igual). */
 function isTransientLuxError(err: unknown): boolean {
   return (
+    err instanceof DocutenTransientError ||
     err instanceof LuxNetworkError ||
     err instanceof LuxAuthError ||
     (err instanceof LuxHttpError && err.isTransient)
@@ -45,6 +50,10 @@ function isTransientLuxError(err: unknown): boolean {
  *  texto de pedido/albaran (p.ej. una alta, id='0' todavia) usa ese. `undefined` = sin
  *  referencia resoluble en absoluto. */
 function keyFor(target: PendingTarget): string | undefined {
+  if (target.domain === 'ruta') {
+    const ruta = limpiarFiltroRuta(target.ruta).toUpperCase();
+    return ruta === '' ? undefined : `ruta:${target.almacen ?? ''}:${ruta}`;
+  }
   if (target.domain === 'expedicion') {
     if (target.idPedido && target.idPedido !== '0') {
       return `exp:id:${target.idPedido}`;
@@ -84,6 +93,9 @@ function mergeTarget(previous: PendingTarget, incoming: PendingTarget): PendingT
       almacen: incoming.almacen ?? previous.almacen,
       terminal: incoming.terminal ?? previous.terminal,
     };
+  }
+  if (previous.domain === 'ruta' && incoming.domain === 'ruta') {
+    return { ...incoming, terminal: incoming.terminal ?? previous.terminal };
   }
   return incoming;
 }
@@ -131,6 +143,10 @@ export class LuxActionWatcher {
     private readonly recepcionesService: RecepcionesService,
     private readonly logger: Logger,
     private readonly sink: WatcherSink = noopWatcherSink,
+    /** Si no se indica, los eventos 'rutaConsultada' (DECA de rutas) se ignoran. */
+    private readonly rutasService?: RutasService,
+    /** Si no se indica (sin DOCUTEN_API_KEY), no se descargan documentos de Docuten. */
+    private readonly docutenClient?: DocutenDescargador,
   ) {
     this.luxTailer = new LogTailer(
       config.luxLogPath,
@@ -248,6 +264,19 @@ export class LuxActionWatcher {
 
       if (event.type === 'rutaEnviada') {
         void this.handleRutaEnviada(event);
+        continue;
+      }
+
+      if (event.type === 'rutaConsultada') {
+        // Las consultas del propio watcher (usuario tecnico) tambien quedan en el log: se ignoran
+        // para no entrar en bucle (el watcher lista expediciones por ruta para resolver el nombre).
+        const propio = event.usuario?.toLowerCase() === this.config.luxUsername.toLowerCase();
+        if (this.rutasService && !propio) {
+          this.scheduleRefresh(
+            { domain: 'ruta', ruta: event.ruta as string, almacen: event.almacen, terminal: event.terminal },
+            event.type,
+          );
+        }
         continue;
       }
 
@@ -409,6 +438,45 @@ export class LuxActionWatcher {
         if (!sinkOk) {
           this.scheduleRetry(key, entry);
         }
+      } else if (entry.target.domain === 'ruta') {
+        const target = entry.target;
+        const consultas = await (this.rutasService as RutasService).consultarDeca(target.ruta, target.almacen);
+        const conDatos = consultas.filter((c) => c.deca.length > 0 || c.envios.length > 0);
+        this.logger.info('Ruta consultada: DECA re-consultado tras deteccion en log', {
+          operacion: 'watcher.rutaDecaConsultada',
+          resultado: 'OK',
+          ruta: target.ruta,
+          almacen: target.almacen,
+          rutasResueltas: consultas.length,
+          rutasConDeca: conDatos.length,
+          motivos,
+          duracionMs: Date.now() - startedAt,
+        });
+        let sinkOk = true;
+        for (const c of conDatos) {
+          const descargas = await this.descargarDocumentos(c.deca.map((d) => d.shipmentId));
+          const ok = await this.callSink(
+            () =>
+              this.sink.onRutaDecaActualizada?.({
+                numeroRuta: c.numeroRuta,
+                consultaOriginal: target.ruta,
+                almacen: target.almacen,
+                terminal: target.terminal,
+                motivos: motivosList,
+                consultadoEn: new Date().toISOString(),
+                consulta: c.consulta,
+                deca: c.deca,
+                envios: c.envios,
+                descargas,
+              }),
+            'ruta',
+            true,
+          );
+          sinkOk = sinkOk && ok;
+        }
+        if (!sinkOk) {
+          this.scheduleRetry(key, entry);
+        }
       } else {
         const result = await this.refreshRecepcion(entry.target);
         this.logger.info('Albaran actualizado tras deteccion en log', {
@@ -473,9 +541,49 @@ export class LuxActionWatcher {
     this.retries.set(key, entry);
   }
 
+  /** Descarga de Docuten los documentos de cada envio (shipmentId) del DECA de una ruta. Un fallo
+   *  de red/5xx se propaga (se reintenta todo el refresco); un 401/404 queda registrado como
+   *  descarga no ok y NO impide guardar el DECA. */
+  private async descargarDocumentos(shipmentIds: string[]): Promise<DescargaDocumento[]> {
+    if (!this.docutenClient) {
+      return [];
+    }
+    const descargas: DescargaDocumento[] = [];
+    for (const shipmentId of new Set(shipmentIds.map((id) => (id ?? '').trim()).filter((id) => id !== ''))) {
+      const resultado = await this.docutenClient.descargarDocumentos(shipmentId);
+      for (const d of resultado) {
+        if (d.ok) {
+          this.logger.info('Documento descargado de Docuten', {
+            operacion: 'watcher.docutenDescarga',
+            resultado: 'OK',
+            shipmentId,
+            variante: d.variante,
+            status: d.status,
+            bytes: d.bytes,
+          });
+        } else {
+          this.logger.warn('Docuten no devolvio el documento', {
+            operacion: 'watcher.docutenDescarga',
+            resultado: 'ERROR',
+            shipmentId,
+            variante: d.variante,
+            status: d.status,
+            error: d.error,
+          });
+        }
+      }
+      descargas.push(...resultado);
+    }
+    return descargas;
+  }
+
   /** Invoca el sink de persistencia (paso 3: guardar en destino AZA) sin dejar que un fallo ahi
    *  se confunda con un fallo de la re-consulta a LUX (que ya se registro por separado, arriba). */
-  private async callSink(fn: () => Promise<void> | void, dominio: 'expedicion' | 'recepcion' | 'ruta'): Promise<boolean> {
+  private async callSink(
+    fn: () => Promise<void> | void,
+    dominio: 'expedicion' | 'recepcion' | 'ruta',
+    reintentable: boolean = dominio !== 'ruta',
+  ): Promise<boolean> {
     try {
       await fn();
       return true;
@@ -484,7 +592,7 @@ export class LuxActionWatcher {
         operacion: 'watcher.sinkError',
         resultado: 'ERROR',
         dominio,
-        reintentara: dominio !== 'ruta',
+        reintentara: reintentable,
         error: err instanceof Error ? err.message : String(err),
       });
       return false;

@@ -29,7 +29,8 @@ export type ActionEventType =
   | 'recepcionPasadaAlmacen'
   | 'recepcionCerradaPicking'
   | 'recepcionLineaConfirmada'
-  | 'rutaEnviada';
+  | 'rutaEnviada'
+  | 'rutaConsultada';
 
 export interface DetectedEvent {
   type: ActionEventType;
@@ -49,6 +50,12 @@ export interface DetectedEvent {
    *  sea de ese almacen por defecto. Confirmado contra el servidor real: SAGUNTO, ALMUSSAFES,
    *  CHESTECM, CHESTE y MONTAVERNER generan actividad en los mismos 2 ficheros de log. */
   almacen?: string;
+  /** Filtro de ruta tal como llega en el log, con comodines (solo 'rutaConsultada'): p.ej.
+   *  `%RT00013615_2026_COMP %`. NO es el numeroRuta exacto: se resuelve despues (RutasService). */
+  ruta?: string;
+  /** Usuario de la linea (solo 'rutaConsultada'): sirve para ignorar las consultas del propio
+   *  watcher (usuario tecnico de la API), que tambien quedan en el log. */
+  usuario?: string;
   /** Terminal (PDA) que origino la accion (`@terminal='0a3287f025a30edd'`), si la linea lo trae.
    *  Las lineas de la oficina suelen no llevarlo. Se guarda en los JSON para uso futuro. */
   terminal?: string;
@@ -247,6 +254,21 @@ const RULES: Rule[] = [
     build: (line) => {
       const idAlbaran = extractParam(line, 'identificador');
       return idAlbaran ? { type: 'recepcionLineaConfirmada', idAlbaran, rawLine: line } : null;
+    },
+  },
+  {
+    type: 'rutaConsultada',
+    // Alguien consulta en la pantalla de expediciones los pedidos de UNA ruta concreta: SELECT del
+    // listado con @ruta='%RT...%' (el listado sin ruta, @ruta='' o '%%', o 'NO ASIGNADA' no cuenta).
+    // De ahi se saca ruta + almacen para consultar p_expRutasDeca (DECA de la ruta). Es una
+    // consulta de lectura, no un cambio: se usa para refrescar el DECA, no el pedido.
+    procedure: 'p_expedicionesAza',
+    actionParam: 'accion',
+    actionValues: ['SELECT'],
+    extra: (line) => /^%?\s*RT\d+/i.test(extractParam(line, 'ruta') ?? ''),
+    build: (line) => {
+      const ruta = extractParam(line, 'ruta');
+      return ruta ? { type: 'rutaConsultada', ruta, usuario: extractParam(line, 'usuario'), rawLine: line } : null;
     },
   },
   {

@@ -8,6 +8,7 @@ import { LuxClient } from './lux/client';
 import { ExpedicionesService } from './services/expediciones';
 import { RecepcionesService } from './services/recepciones';
 import { CatalogosService } from './services/catalogos';
+import { RutasService } from './services/rutas';
 import { createExpedicionesRouter, createRecepcionesRouter, createCatalogosRouter } from './routes';
 import { createHealthRouter } from './health';
 import { createErrorHandler } from './controllers/errorHandler';
@@ -23,18 +24,21 @@ export interface AppDependencies {
   expedicionesService: ExpedicionesService;
   recepcionesService: RecepcionesService;
   catalogosService: CatalogosService;
+  rutasService: RutasService;
 }
 
 /** Construye las dependencias de la aplicacion a partir de la configuracion. */
 export function buildDependencies(config: AppConfig, logger: Logger): AppDependencies {
   const authManager = new AuthManager(config, logger);
   const luxClient = new LuxClient(config, authManager, logger);
+  const expedicionesService = new ExpedicionesService(luxClient);
   return {
     authManager,
     luxClient,
-    expedicionesService: new ExpedicionesService(luxClient),
+    expedicionesService,
     recepcionesService: new RecepcionesService(luxClient),
     catalogosService: new CatalogosService(luxClient, config.luxCatalogCacheTtlMs),
+    rutasService: new RutasService(luxClient, expedicionesService),
   };
 }
 

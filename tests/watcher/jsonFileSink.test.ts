@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach } from 'vitest';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createLogger } from '../../src/logging';
@@ -321,6 +321,105 @@ describe('watcher/jsonFileSink eventos simultaneos del mismo albaran', () => {
       expect(JSON.parse(readFileSync(join(dir, ficheros[0] as string), 'utf-8')).estado).toBe('ASIGNADO');
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('watcher/jsonFileSink DECA de rutas', () => {
+  const consulta = {
+    filtroLog: '%RT00013615_2026_COMP %',
+    metodoResolucion: 'listado' as const,
+    llamadas: [
+      { procedimiento: 'p_expRutasDeca', accion: 'SELECT', parametros: { numeroRuta: 'RT00013615_2026_COMP MAMENTRANS007 S.L.' }, almacen: 'SAGUNTO', filas: 1 },
+    ],
+  };
+  const base = {
+    numeroRuta: 'RT00013615_2026_COMP MAMENTRANS007 S.L.',
+    consultaOriginal: '%RT00013615_2026_COMP %',
+    almacen: 'SAGUNTO',
+    motivos: ['rutaConsultada' as const],
+    consulta,
+    envios: [],
+  };
+  const deca = (estado: string) => [{ shipmentReference: 'RT-AZA', estado } as never];
+  const CARPETA_RUTA = 'RT00013615_2026_COMP_MAMENTRANS007_S_L_';
+
+  it('guarda en una CARPETA POR RUTA el JSON (consulta a la API + datos) y reemplaza el anterior', async () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    const eventos = join(raiz, 'events');
+    const rutas = join(raiz, 'rutas-deca');
+    try {
+      const sink = createJsonFileSink(eventos, createLogger('error'), undefined, rutas);
+      await sink.onRutaDecaActualizada?.({ ...base, consultadoEn: '2026-10-05T08:00:00Z', deca: deca('PENDIENTE'), descargas: [] });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await sink.onRutaDecaActualizada?.({ ...base, consultadoEn: '2026-10-05T08:05:00Z', deca: deca('ENVIADO'), descargas: [] });
+
+      expect(readdirSync(rutas)).toEqual([CARPETA_RUTA]); // la carpeta lleva el nombre de la ruta
+      const ficheros = readdirSync(join(rutas, CARPETA_RUTA));
+      expect(ficheros).toHaveLength(1);
+      expect(ficheros[0]).toMatch(/^\d{4}-\d{2}-\d{2}T.*--rutadeca-RT00013615_2026_COMP_MAMENTRANS007_S_L_\.json$/);
+      const contenido = JSON.parse(readFileSync(join(rutas, CARPETA_RUTA, ficheros[0] as string), 'utf-8'));
+      expect(contenido.deca[0].estado).toBe('ENVIADO'); // los datos
+      expect(contenido.consulta.llamadas[0]).toMatchObject({ procedimiento: 'p_expRutasDeca', accion: 'SELECT', parametros: { numeroRuta: base.numeroRuta } }); // la consulta
+      expect(existsSync(eventos)).toBe(false); // la carpeta de eventos no se toca
+    } finally {
+      rmSync(raiz, { recursive: true, force: true });
+    }
+  });
+
+  it('guarda en la carpeta de la ruta los documentos de Docuten (PDF decodificado, con su nombre) sin duplicar los identicos, y deja solo metadatos en el JSON', async () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    try {
+      const sink = createJsonFileSink(join(raiz, 'events'), createLogger('error'), undefined, raiz);
+      const pdf = Buffer.from('%PDF-1.4 porte');
+      const doc = { fileName: 'Porte ruta RT00013615_2026_COMP MAMENTRANS007 S.L. -AZA.pdf', documentType: 'transport_control_document', bytes: pdf.length, datos: pdf };
+      const descarga = (variante: 'include-all' | 'simple') => ({
+        shipmentId: 'SHIP-1', variante, url: `https://x/${variante}`, status: 200, ok: true, extension: 'json', bytes: 999, documentos: [doc],
+      });
+      await sink.onRutaDecaActualizada?.({
+        ...base,
+        consultadoEn: '2026-10-05T08:00:00Z',
+        deca: deca('ENVIADO'),
+        // Las dos llamadas devuelven el MISMO documento (caso real de Docuten) + una que falla.
+        descargas: [
+          descarga('include-all'),
+          descarga('simple'),
+          { shipmentId: 'SHIP-2', variante: 'simple', url: 'https://x/2', status: 404, ok: false, extension: 'bin', bytes: 0, error: 'no hay documentos' },
+        ],
+      });
+
+      const dir = join(raiz, CARPETA_RUTA);
+      const nombres = readdirSync(dir).sort();
+      expect(nombres).toHaveLength(2); // el JSON + UN solo PDF (no dos copias iguales)
+      expect(nombres).toContain(doc.fileName);
+      expect(readFileSync(join(dir, doc.fileName)).equals(pdf)).toBe(true);
+
+      const json = JSON.parse(readFileSync(join(dir, nombres.find((n) => n.endsWith('.json')) as string), 'utf-8'));
+      expect(json.descargas).toHaveLength(3);
+      expect(json.descargas[0]).toMatchObject({ variante: 'include-all', ok: true, status: 200, ficheros: [{ fichero: doc.fileName, documentType: 'transport_control_document', bytes: pdf.length }] });
+      expect(json.descargas[1].ficheros[0].fichero).toBe(doc.fileName); // apunta al mismo fichero
+      expect(json.descargas[0].documentos).toBeUndefined(); // el contenido NO va dentro del JSON
+      expect(json.descargas[2]).toMatchObject({ ok: false, status: 404, error: 'no hay documentos', ficheros: [] });
+    } finally {
+      rmSync(raiz, { recursive: true, force: true });
+    }
+  });
+
+  it('si dos documentos tienen el mismo nombre pero contenido distinto, no se pisan (se distingue por la variante)', async () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    try {
+      const sink = createJsonFileSink(join(raiz, 'events'), createLogger('error'), undefined, raiz);
+      const mk = (txt: string) => ({ fileName: 'Porte.pdf', bytes: txt.length, datos: Buffer.from(txt) });
+      const d = (variante: 'include-all' | 'simple', txt: string) => ({
+        shipmentId: 'S', variante, url: 'u', status: 200, ok: true, extension: 'json', bytes: 1, documentos: [mk(txt)],
+      });
+      await sink.onRutaDecaActualizada?.({ ...base, consultadoEn: 't', deca: deca('X'), descargas: [d('include-all', 'AAAA'), d('simple', 'BBBB')] });
+      const pdfs = readdirSync(join(raiz, CARPETA_RUTA)).filter((n) => n.endsWith('.pdf')).sort();
+      expect(pdfs).toEqual(['Porte (simple).pdf', 'Porte.pdf']);
+      expect(readFileSync(join(raiz, CARPETA_RUTA, 'Porte.pdf'), 'utf-8')).toBe('AAAA');
+      expect(readFileSync(join(raiz, CARPETA_RUTA, 'Porte (simple).pdf'), 'utf-8')).toBe('BBBB');
+    } finally {
+      rmSync(raiz, { recursive: true, force: true });
     }
   });
 });

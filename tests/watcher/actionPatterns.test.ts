@@ -189,3 +189,36 @@ describe('watcher/actionPatterns', () => {
     expect(matchActionLine(line)).toMatchObject({ type: 'expedicionLineaModificada', idPedido: '11115' });
   });
 });
+
+describe('watcher/actionPatterns: rutaConsultada (DECA de rutas)', () => {
+  const linea = (ruta: string, extra = "@USUARIO='MMartosL'", accion = 'SELECT'): string =>
+    `05-oct-2026 10:19:49 INFO:   [] exec p_expedicionesAza @extraMostrar='',@estado='',@tipo='',@generarDeca='',@fechaCerrado_FIN='',@ruta='${ruta}',@ALMACEN='SAGUNTO',@ACCION='${accion}',${extra}`;
+
+  it('detecta el listado de expediciones filtrado por una ruta concreta y extrae ruta, almacen y usuario', () => {
+    const l = linea('%RT00013659_2026_COMPARTIDO%');
+    expect(matchActionLine(l)).toEqual({
+      type: 'rutaConsultada',
+      ruta: '%RT00013659_2026_COMPARTIDO%',
+      usuario: 'MMartosL',
+      almacen: 'SAGUNTO',
+      rawLine: l,
+      terminal: undefined,
+    });
+  });
+
+  it('acepta tambien una ruta parcial o sin comodines (se resuelve despues al nombre exacto)', () => {
+    expect(matchActionLine(linea('%RT00013615_2026_COMP %'))?.type).toBe('rutaConsultada');
+    expect(matchActionLine(linea('RT00013585'))?.type).toBe('rutaConsultada');
+  });
+
+  it('NO dispara con el listado sin ruta (vacia o %%), "NO ASIGNADA" o texto que no es una ruta', () => {
+    expect(matchActionLine(linea(''))).toBeNull();
+    expect(matchActionLine(linea('%%'))).toBeNull();
+    expect(matchActionLine(linea('NO ASIGNADA'))).toBeNull();
+    expect(matchActionLine(linea('00013539'))).toBeNull();
+  });
+
+  it('NO dispara con otras acciones de p_expedicionesAza (solo el SELECT del listado)', () => {
+    expect(matchActionLine(linea('%RT00013659_2026_COMPARTIDO%', "@USUARIO='MMartosL'", 'DELETE'))).toBeNull();
+  });
+});

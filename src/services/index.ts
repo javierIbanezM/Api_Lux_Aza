@@ -11,3 +11,6 @@ export type {
 } from './recepciones';
 
 export { CatalogosService } from './catalogos';
+
+export { RutasService } from './rutas';
+export type { RutaDecaConsulta } from './rutas';

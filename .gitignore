@@ -22,3 +22,6 @@ Thumbs.db
 # Base de datos SQLite local de usuarios de la interfaz web de almacen (contiene hashes de
 # contrasenas reales, nunca se versiona).
 data/
+
+# Coleccion de Bruno (pruebas manuales de la API de Docuten): puede llevar la clave real en cabeceras.
+bruno/

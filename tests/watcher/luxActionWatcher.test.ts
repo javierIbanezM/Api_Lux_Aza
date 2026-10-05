@@ -6,6 +6,7 @@ import { AuthManager } from '../../src/auth';
 import { LuxClient } from '../../src/lux/client';
 import { ExpedicionesService } from '../../src/services/expediciones';
 import { RecepcionesService } from '../../src/services/recepciones';
+import { RutasService } from '../../src/services/rutas';
 import { createLogger } from '../../src/logging';
 import { LuxActionWatcher } from '../../src/watcher/luxActionWatcher';
 import type { WatcherConfig } from '../../src/watcher/watcherConfig';
@@ -36,6 +37,7 @@ describe('watcher/LuxActionWatcher', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
 
   const config: WatcherConfig = {
+    luxUsername: 'apiUser',
     luxLogPath: '',
     luxMobileLogPath: '',
     pollIntervalMs: 20,
@@ -43,6 +45,9 @@ describe('watcher/LuxActionWatcher', () => {
     maxWaitMs: 500,
     retryDelayMs: 60_000,
     stateDir: '',
+    rutasDecaDir: '',
+    docutenApiKey: undefined,
+    docutenBaseUrl: 'http://docuten.invalid/api/v1',
     jsonEventsDir: '', // no usado en estos tests: LuxActionWatcher no conoce jsonFileSink, solo WatcherSink
   };
 
@@ -86,7 +91,8 @@ describe('watcher/LuxActionWatcher', () => {
     const luxClient = new LuxClient(appConfig, auth, createLogger('error'));
     const expedicionesService = new ExpedicionesService(luxClient);
     const recepcionesService = new RecepcionesService(luxClient);
-    return new LuxActionWatcher(config, luxClient, expedicionesService, recepcionesService, createLogger('debug'), sink);
+    const rutasService = new RutasService(luxClient, expedicionesService);
+    return new LuxActionWatcher(config, luxClient, expedicionesService, recepcionesService, createLogger('debug'), sink, rutasService);
   }
 
   /** Arranca el watcher y espera a que el primer sondeo (que fija la linea base, ver LogTailer)
@@ -738,6 +744,119 @@ describe('watcher/LuxActionWatcher', () => {
       config.debounceMs = originalDebounce;
       config.maxWaitMs = originalMaxWait;
     }
+  });
+
+  const RUTA_EXACTA = 'RT00013615_2026_COMP MAMENTRANS007 S.L.';
+  const lineaRuta = (usuario: string): string =>
+    `05-oct-2026 10:22:35 INFO:   [] exec p_expedicionesAza @extraMostrar='',@estado='',@tipo='',@generarDeca='',@fechaCerrado_FIN='',@ruta='%RT00013615_2026_COMP %',@ALMACEN='SAGUNTO',@ACCION='SELECT',@USUARIO='${usuario}'\n`;
+  const mockDeca = () => {
+    const llamadas: string[] = [];
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        llamadas.push(`${proc}:${body.accion}:${body.numeroRuta ?? body.ruta ?? ''}`);
+        if (proc === 'p_expedicionesAza' && body.accion === 'SELECT' && body.ruta) {
+          return { status: 200, body: [{ id: '42', pedido: 'P1', estado: 'ASIGNADO', ruta: RUTA_EXACTA }] };
+        }
+        if (proc === 'p_expRutasDeca' && body.accion === 'SELECT' && body.numeroRuta === RUTA_EXACTA) {
+          return { status: 200, body: [{ shipmentReference: `${RUTA_EXACTA}-AZA`, estado: 'ENVIADO', shipmentStatus: 'created' }] };
+        }
+        if (proc === 'p_expRutasDeca' && body.accion === 'SELECT_ENVIOS') {
+          return { status: 200, body: [] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+    return llamadas;
+  };
+
+  it('consultar una ruta en la pantalla de expediciones: resuelve el nombre exacto y guarda su DECA (p_expRutasDeca)', async () => {
+    const llamadas = mockDeca();
+    const onRutaDecaActualizada = vi.fn();
+    await startAndWaitBaseline({ onRutaDecaActualizada });
+
+    appendFileSync(luxLogPath, lineaRuta('MMartosL'));
+
+    await waitUntil(() => onRutaDecaActualizada.mock.calls.length > 0, 5000);
+    expect(onRutaDecaActualizada.mock.calls[0]?.[0]).toMatchObject({
+      numeroRuta: RUTA_EXACTA,
+      consultaOriginal: '%RT00013615_2026_COMP %',
+      almacen: 'SAGUNTO',
+      motivos: ['rutaConsultada'],
+      envios: [],
+    });
+    expect(onRutaDecaActualizada.mock.calls[0]?.[0].deca[0].estado).toBe('ENVIADO');
+    expect(llamadas).toContain(`p_expRutasDeca:SELECT:${RUTA_EXACTA}`);
+    expect(llamadas).toContain(`p_expRutasDeca:SELECT_ENVIOS:${RUTA_EXACTA}`);
+  });
+
+  it('con cliente de Docuten, descarga los documentos del shipmentId del DECA y los pasa al sink', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expedicionesAza') {
+          return { status: 200, body: [{ id: '42', pedido: 'P1', estado: 'ASIGNADO', ruta: RUTA_EXACTA }] };
+        }
+        if (proc === 'p_expRutasDeca' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ shipmentReference: `${RUTA_EXACTA}-AZA`, estado: 'ENVIADO', shipmentId: 'SHIP-1' }] };
+        }
+        return { status: 200, body: [] };
+      },
+    });
+    const descargarDocumentos = vi.fn(async (shipmentId: string) => [
+      { shipmentId, variante: 'include-all' as const, url: 'u1', status: 200, ok: true, extension: 'zip', bytes: 3, datos: Buffer.from('abc') },
+      { shipmentId, variante: 'simple' as const, url: 'u2', status: 404, ok: false, extension: 'bin', bytes: 0, error: 'no hay' },
+    ]);
+    const onRutaDecaActualizada = vi.fn();
+    // Watcher con los servicios reales (contra el mock de LUX) y un cliente de Docuten simulado.
+    const appConfig = buildTestConfig({ luxBaseUrl: baseUrl });
+    const luxClient = new LuxClient(appConfig, new AuthManager(appConfig, createLogger('error')), createLogger('error'));
+    const exp = new ExpedicionesService(luxClient);
+    watcher = new LuxActionWatcher(
+      config, luxClient, exp, new RecepcionesService(luxClient), createLogger('debug'),
+      { onRutaDecaActualizada }, new RutasService(luxClient, exp), { descargarDocumentos },
+    );
+    watcher.start();
+    await waitUntil(() => existsSync(join(config.stateDir, 'lux.state.json')) && existsSync(join(config.stateDir, 'lux-mobile.state.json')));
+
+    appendFileSync(luxLogPath, lineaRuta('MMartosL'));
+
+    await waitUntil(() => onRutaDecaActualizada.mock.calls.length > 0, 5000);
+    expect(descargarDocumentos).toHaveBeenCalledWith('SHIP-1');
+    const resultado = onRutaDecaActualizada.mock.calls[0]?.[0];
+    expect(resultado.descargas).toHaveLength(2);
+    expect(resultado.descargas.map((d: { variante: string; ok: boolean }) => [d.variante, d.ok])).toEqual([['include-all', true], ['simple', false]]);
+  });
+
+  it('ignora las consultas de ruta hechas por el propio watcher (usuario tecnico): sin bucle', async () => {
+    const llamadas = mockDeca();
+    const onRutaDecaActualizada = vi.fn();
+    await startAndWaitBaseline({ onRutaDecaActualizada });
+
+    appendFileSync(luxLogPath, lineaRuta('apiUser'));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    expect(onRutaDecaActualizada).not.toHaveBeenCalled();
+    expect(llamadas).toEqual([]);
+  });
+
+  it('una ruta sin DECA ni envios no genera registro en el sink', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expedicionesAza') {
+          return { status: 200, body: [{ id: '42', pedido: 'P1', ruta: RUTA_EXACTA }] };
+        }
+        if (proc === 'p_expRutasDeca') {
+          return { status: 200, body: body.accion === 'SELECT' ? [] : '' };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+    const onRutaDecaActualizada = vi.fn();
+    await startAndWaitBaseline({ onRutaDecaActualizada });
+
+    appendFileSync(luxLogPath, lineaRuta('MMartosL'));
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.rutaDecaConsultada'), 5000);
+
+    expect(onRutaDecaActualizada).not.toHaveBeenCalled();
   });
 
   it('si el sink falla, el refresco ya registrado en el log no se ve afectado (se registra watcher.sinkError aparte)', async () => {

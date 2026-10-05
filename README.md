@@ -28,9 +28,14 @@ pm2 restart api-whales-watcher   # reiniciar solo uno
 pm2 stop api-whales-watcher      # parar solo uno
 ```
 
-Arranque automatico con Windows (para que sobreviva a un reinicio del servidor): instalar
-`pm2-windows-startup` (`npm i -g pm2-windows-startup && pm2-startup install`) y luego `pm2 save`,
-o bien una Tarea programada "Al iniciar el sistema" que ejecute `pm2 resurrect`.
+Cerrar la ventana de PowerShell NO para nada: PM2 es un demonio en segundo plano. Solo lo paran
+`pm2 stop`, `pm2 delete` o `pm2 kill`.
+
+Arranque automatico al reiniciar el servidor (sin que nadie inicie sesion): ejecutar UNA vez, como
+administrador y con la misma cuenta que lanza PM2, `deploy\instalar-arranque-pm2.ps1`. Registra
+una tarea programada "PM2 resurrect (API WHALES)" al iniciar el sistema (1 min de retardo, para que
+la red este lista) y hace `pm2 save`. Antes deja `pm2 list` con SOLO lo que quieras que arranque.
+`pm2-windows-startup` no sirve en un servidor: solo arranca cuando alguien inicia sesion.
 
 Puntos importantes:
 - **Una sola instancia de cada uno** (ya configurado). Dos watchers duplicarian eventos y se
@@ -53,6 +58,19 @@ Puntos importantes:
 - **No uses `pm2 restart all` / `pm2 delete all`** si en el servidor hay otras aplicaciones en PM2.
 - Si el watcher cae o se reinicia no pierde eventos: al volver relee desde la ultima posicion
   confirmada (`data/watcher-state/`), incluso si el log rota mientras estaba parado.
+
+## Evento: consulta de una ruta -> DECA (p_expRutasDeca)
+
+Cuando alguien filtra por una ruta concreta en la pantalla de expediciones (log de LUX:
+`p_expedicionesAza ... @ruta='%RT00013615_2026_COMP %' ... @ALMACEN='SAGUNTO' @ACCION='SELECT'`), el
+watcher toma la ruta y el almacen de esa linea, resuelve el nombre EXACTO de la ruta (el listado de
+expediciones devuelve el campo `ruta` completo) y consulta `p_expRutasDeca` con `SELECT` y
+`SELECT_ENVIOS`. Si la ruta tiene DECA o envios, guarda `data/watcher-rutas-deca/<fecha>--rutadeca-<ruta>.json`
+(carpeta propia, `WATCHER_RUTAS_DECA_DIR`; una SUBCARPETA por ruta con el nombre de la ruta, con el JSON mas
+reciente dentro y los ficheros descargados de Docuten, ver mas abajo). Cada JSON lleva la consulta hecha
+a la API (`consulta.llamadas`: procedimiento, accion, parametros, almacen y filas de cada llamada) y los
+datos devueltos (`deca`, `envios`). El listado sin ruta (`''`, `%%`, `NO ASIGNADA`) no cuenta, y las
+consultas del propio usuario tecnico se ignoran (evita bucles).
 
 ## Comandos rapidos del watcher de logs (PowerShell, desde `C:\API.WHALES`)
 

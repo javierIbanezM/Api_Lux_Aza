@@ -540,3 +540,90 @@ APLICADO 2026-10-02: ACCESO A LA WEB POR HTTP (http://SRVNewWhales.zar.local:300
 - PENDIENTE (seguridad, SEG-5): poner HTTPS con proxy (IIS/Nginx), app.set('trust proxy', 1) y
   volver a SESSION_COOKIE_SECURE=true. Mientras tanto usuario/contrasena y X-Api-Key viajan en
   claro por la red interna.
+
+----------------------------------------------------------------------
+APLICADO 2026-10-02: ARRANQUE AUTOMATICO EN EL SERVIDOR (145)
+----------------------------------------------------------------------
+- Cerrar la ventana de PowerShell no para PM2 (demonio). Falta que sobreviva a un reinicio.
+- Nuevo deploy/instalar-arranque-pm2.ps1: registra la tarea programada "PM2 resurrect (API
+  WHALES)" al iniciar el sistema (retardo 1 min, cuenta con contrasena, nivel mas alto) y ejecuta
+  pm2 save. pm2-windows-startup NO sirve en servidor (solo al iniciar sesion).
+- PENDIENTE en el 145: ejecutarlo una vez como administrador con la cuenta de PM2 y comprobar
+  tras un reinicio real (pm2 list a los ~2 min). Decidir antes si api-whales (servidor web) se
+  queda o se hace pm2 delete api-whales (watcher solo).
+- Ojo: la cuenta debe tener acceso a \192.168.2.140\c$ (SYSTEM no lo tendria).
+
+----------------------------------------------------------------------
+APLICADO 2026-10-05: EVENTO "RUTA CONSULTADA" -> DECA DE LA RUTA (p_expRutasDeca)
+----------------------------------------------------------------------
+- Disparo: p_expedicionesAza, accion SELECT, con @ruta='%RT...%' (ruta concreta). No dispara con
+  @ruta vacio, '%%', 'NO ASIGNADA' ni con otras acciones. Ignora al usuario tecnico (apiUser) para
+  no entrar en bucle (las consultas del propio watcher tambien quedan en el log).
+- Flujo: ruta + almacen del log -> resolver nombre EXACTO (RutasService.resolverNumerosRuta, via el
+  listado de expediciones; reintenta con estado=ENVIADO y, si no, usa el filtro limpio) ->
+  p_expRutasDeca SELECT y SELECT_ENVIOS -> si hay datos, JSON rutadeca-<ruta>.json (uno por ruta).
+  Mismo debounce / reintentos / confirmacion de posicion que el resto de eventos.
+- Hallazgos de p_expRutasDeca contra LUX real (2026-10-05):
+  * SELECT acepta `id` (id de la RUTA, no el id del DECA) o `numeroRuta` EXACTO: sin comodines ni
+    nombre parcial. Parametro idParent NO existe (LUX lo registra como SEVERE en su log).
+  * Devuelve el envio DECA: shipmentReference (<ruta>-AZA), estado, shipmentStatus, documentStatus,
+    fechaEnvio, shipmentId, documentId, publicId, usuario, id, error. De 56 rutas reales solo 3
+    tenian DECA. El estado cambia con el tiempo (ENVIADO/created -> FIRMADO/pending_delivery).
+  * SELECT_ENVIOS devolvio cuerpo vacio ("") en TODAS las rutas probadas: aun no se ha visto una
+    respuesta con datos. Se trata "" como sin filas. PENDIENTE: confirmar su forma con una ruta
+    cuyo envio ya tenga eventos.
+- p_expRutasDeca anadido a la lista blanca (solo lectura). 217 tests en verde.
+- PENDIENTE: decidir si estos JSON de ruta se purgan (no tienen estado final); si hace falta un
+  endpoint HTTP (GET /api/rutas/:numeroRuta/deca); copiar los cambios al servidor 145
+  (robocopy + npm run build + pm2 restart api-whales-watcher).
+
+- 2026-10-05: los JSON del DECA de rutas van a SU carpeta (data/watcher-rutas-deca, variable
+  WATCHER_RUTAS_DECA_DIR) y cada uno incluye la consulta hecha a la API (consulta.filtroLog,
+  metodoResolucion y llamadas[]: procedimiento, accion, parametros, almacen, filas) junto a los
+  datos (deca, envios). Un JSON por ruta (el mas reciente). 218 tests en verde.
+
+----------------------------------------------------------------------
+APLICADO 2026-10-05: DESCARGA DE DOCUMENTOS DE DOCUTEN (eCMR) POR CADA DECA
+----------------------------------------------------------------------
+- Estructura: data/watcher-rutas-deca/<nombre de la ruta>/ con dentro el JSON
+  (<fecha>--rutadeca-<ruta>.json: consulta a la API + datos + metadatos de las descargas) y los
+  ficheros descargados: docuten-<shipmentId>-include-all.<ext> y docuten-<shipmentId>-simple.<ext>.
+  El contenido binario NO va dentro del JSON (solo estado, bytes, contentType, nombre del fichero).
+- Llamadas (GET, cabecera X-API-KEY = DOCUTEN_API_KEY, {id} = shipmentId del DECA):
+    {DOCUTEN_BASE_URL}/shipments/{id}/documents/download?include=all   -> variante include-all
+    {DOCUTEN_BASE_URL}/shipments/{id}/documents/download               -> variante simple
+  (la segunda URL del enunciado llevaba "//" tras v1: se normalizo a una sola barra).
+  DOCUTEN_BASE_URL por defecto https://ecmr-sandbox.docuten.com/api/v1 (sandbox; cambiara en prod).
+- Errores: 401/403/404 -> se registra en el JSON (descargas[].ok=false, error) y NO impide guardar el
+  DECA; red/5xx/429 -> transitorio, se reintenta todo el refresco. La clave nunca se registra y solo se
+  envia al host original (en redirecciones a otro host no se reenvia).
+- Sin DOCUTEN_API_KEY no se descarga nada (aviso al arrancar); el resto del watcher sigue igual.
+- BLOQUEANTE: PRUEBA REAL CON LA CLAVE ACTUAL = HTTP 401 {"error_code":"UNAUTHORIZED",
+  "error_message":"Authentication required"} en las dos llamadas (con la clave tal cual y sin su
+  primer caracter). Hace falta confirmar con Docuten la clave del SANDBOX y la cabecera exacta.
+  Hasta entonces la descarga esta cubierta solo por tests con un servidor simulado (225 en verde)
+  y NO se ha visto la forma real de la respuesta (tipo de fichero: pdf/zip, nombre, tamano).
+
+----------------------------------------------------------------------
+ACTUALIZACION 2026-10-05 (tarde): DOCUTEN FUNCIONA CON PRODUCCION - SUSTITUYE AL "BLOQUEANTE" DE ARRIBA
+----------------------------------------------------------------------
+- Causa del 401: clave y entorno equivocados. La configuracion de Whales (tabla de parametros) trae
+  DOCUTEN_URL=https://ecmr.docuten.com/api/v1 (PRODUCCION) y DOCUTEN_API_KEY=ef5e0858-... (sin la
+  "r" inicial). Los envios que crea LUX viven en produccion; el sandbox no los conoce.
+  .env actualizado (clave + DOCUTEN_BASE_URL de produccion). DOCUTEN_CALLBACK_URL de esa tabla es
+  la URL a la que Docuten avisa de cambios; no se usa aqui.
+- Respuesta real de GET {base}/shipments/{shipmentId}/documents/download[?include=all]:
+  HTTP 200 application/json  {"documents":[{"file_name":"Porte ruta <ruta>-AZA.pdf",
+  "content":"<PDF en base64>","document_type":"transport_control_document"}]}
+  Probado con 2 envios reales: 1 documento cada uno (PDF valido, 4 paginas). include=all y la
+  llamada simple devolvieron EXACTAMENTE lo mismo (mismo md5) en esos dos envios; con otros envios
+  (p.ej. ya entregados/firmados) include=all podria traer mas documentos: pendiente de ver.
+- Cambio de diseno: el watcher decodifica el base64 y guarda el PDF con su nombre
+  (data/watcher-rutas-deca/<ruta>/Porte ruta <ruta>-AZA.pdf). Si las dos llamadas devuelven el
+  mismo documento se guarda UNA vez (por huella); si el nombre coincide pero el contenido no, se
+  distingue "(simple)". El JSON de la ruta solo lleva metadatos (descargas[].ficheros[]).
+- PENDIENTE: confirmar con el usuario que "los 2 ficheros" se corresponde con esto (hoy: 1 PDF
+  por envio porque ambas llamadas coinciden); copiar al servidor 145 y poner alli la clave y la
+  URL en el .env (+ npm run build + pm2 restart api-whales-watcher).
+- SEGURIDAD: la clave de Docuten de produccion esta en texto claro en la tabla de parametros de la
+  base WhalesAza y en este .env; rotarla si el origen del chat/tabla no es de confianza.

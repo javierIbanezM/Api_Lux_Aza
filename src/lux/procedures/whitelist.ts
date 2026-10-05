@@ -13,6 +13,10 @@
  * contra el log real de LUX, ver docs/lux-api-analysis.md §16. Solo lectura, no expuesto por
  * ningun endpoint de /api/*.
  *
+ * `p_expRutasDeca` (DECA de rutas, dato aportado por el proveedor, no esta en el PDF): acciones
+ * SELECT (se le pasa un `id` o un `numeroRuta`) y SELECT_ENVIOS (todos los eventos/envios de la
+ * ruta). Solo lectura; lo usa el watcher de logs (src/watcher/) cuando alguien consulta una ruta.
+ *
  * `p_recAlbaranHUPreinformado` es el equivalente de `p_expPedidoContenedores` pero para
  * recepciones (detalle por HU/pallet fisico, no por linea de albaran): confirmado contra el
  * servidor real (accion=SELECT_INICIO, idParent=<idAlbaran>), forma de datos propia (numeroSerie,
@@ -24,6 +28,7 @@ export const PROCEDURE_WHITELIST = [
   'p_expedicionesAza',
   'p_expPedidoContenedores',
   'p_expRutasDetalle',
+  'p_expRutasDeca',
   'p_recCabeceraAza',
   'p_recAlbaranLineas',
   'p_recepcionesAza',

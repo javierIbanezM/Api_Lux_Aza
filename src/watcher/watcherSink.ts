@@ -1,5 +1,9 @@
 import type { ActionEventType } from './actionPatterns';
+import type { DescargaDocumento } from '../docuten';
 import type {
+  LlamadaApi,
+  RutaDeca,
+  RutaDecaEnvio,
   Expedicion,
   ExpedicionContenedor,
   ExpedicionLinea,
@@ -59,6 +63,34 @@ export interface AlbaranActualizado {
   hus: RecepcionHU[];
 }
 
+/** DECA de una ruta (p_expRutasDeca): SELECT + SELECT_ENVIOS tras detectar que alguien consulto
+ *  esa ruta en la pantalla de expediciones. Solo se emite si la ruta tiene DECA o envios. */
+export interface RutaDecaActualizada {
+  /** Nombre EXACTO de la ruta (resuelto a partir del filtro del log). */
+  numeroRuta: string;
+  /** Filtro tal como llego en el log, con comodines (p.ej. `%RT00013615_2026_COMP %`). */
+  consultaOriginal: string;
+  almacen?: string;
+  terminal?: string;
+  motivos: ActionEventType[];
+  consultadoEn: string;
+  /** La consulta hecha a la API de LUX que produjo estos datos: como se resolvio el nombre de la
+   *  ruta y cada llamada (procedimiento, accion, parametros, almacen, numero de filas). */
+  consulta: {
+    filtroLog: string;
+    metodoResolucion: 'listado' | 'listado-enviado' | 'filtro-literal';
+    llamadas: LlamadaApi[];
+  };
+  /** p_expRutasDeca accion=SELECT. */
+  deca: RutaDeca[];
+  /** p_expRutasDeca accion=SELECT_ENVIOS. */
+  envios: RutaDecaEnvio[];
+  /** Descargas de documentos en Docuten (2 por envio: include=all y simple). Vacio si no hay
+   *  clave de Docuten configurada o el DECA no tiene shipmentId. Llevan el contenido (`datos`);
+   *  el sink guarda los ficheros y deja solo los metadatos en el JSON. */
+  descargas: DescargaDocumento[];
+}
+
 /** Envio de una ruta de transporte (`p_expRutas` ENVIAR_FORZAR) que NO se pudo resolver a ningun
  *  pedido: en LUX la ruta estaba vacia (sin lineas en `p_expRutasDetalle`) al enviarla. Se
  *  registra igualmente para que el evento no se pierda en silencio. */
@@ -94,6 +126,7 @@ export interface WatcherSink {
   onExpedicionActualizada?(result: ExpedicionActualizada): Promise<void> | void;
   onAlbaranActualizado?(result: AlbaranActualizado): Promise<void> | void;
   onRutaEnviadaSinPedidos?(result: RutaEnviadaSinPedidos): Promise<void> | void;
+  onRutaDecaActualizada?(result: RutaDecaActualizada): Promise<void> | void;
 }
 
 /**

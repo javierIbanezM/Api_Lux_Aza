@@ -19,6 +19,7 @@ import { createLogger } from '../src/logging';
 import { buildDependencies } from '../src/app';
 import { LuxActionWatcher } from '../src/watcher/luxActionWatcher';
 import { createJsonFileSink } from '../src/watcher/jsonFileSink';
+import { DocutenClient } from '../src/docuten';
 
 function bootstrap(): void {
   const logger = createLogger((process.env.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error') ?? 'info');
@@ -42,7 +43,17 @@ function bootstrap(): void {
   // individual en disco (ver src/watcher/jsonFileSink.ts), para poder revisar exactamente que
   // datos llegan antes de decidir el mapeo de campos. Carpeta configurable via WATCHER_JSON_DIR
   // (por defecto "data/watcher-events").
-  const sink = createJsonFileSink(watcherConfig.jsonEventsDir, logger);
+  const sink = createJsonFileSink(watcherConfig.jsonEventsDir, logger, undefined, watcherConfig.rutasDecaDir);
+  // Descarga de documentos de Docuten (eCMR): solo si hay DOCUTEN_API_KEY en el .env.
+  const docutenClient = watcherConfig.docutenApiKey
+    ? new DocutenClient(watcherConfig.docutenBaseUrl, watcherConfig.docutenApiKey)
+    : undefined;
+  if (!docutenClient) {
+    logger.warn('DOCUTEN_API_KEY no configurada: no se descargaran documentos de Docuten', {
+      operacion: 'watcher.docutenSinClave',
+      resultado: 'ERROR',
+    });
+  }
   const watcher = new LuxActionWatcher(
     watcherConfig,
     deps.luxClient,
@@ -50,6 +61,8 @@ function bootstrap(): void {
     deps.recepcionesService,
     logger,
     sink,
+    deps.rutasService,
+    docutenClient,
   );
 
   watcher.start();

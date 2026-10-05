@@ -1,10 +1,12 @@
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import type { Logger } from '../logging';
 import type {
   AlbaranActualizado,
   DestinoPersistencia,
   ExpedicionActualizada,
+  RutaDecaActualizada,
   RutaEnviadaSinPedidos,
   WatcherSink,
 } from './watcherSink';
@@ -23,6 +25,17 @@ function timestampParaNombre(): string {
   const d = new Date();
   const pad = (n: number, len = 2): string => String(n).padStart(len, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}-${pad(d.getMilliseconds(), 3)}`;
+}
+
+/** Nombre de fichero valido en Windows conservando espacios y puntos (p.ej. el que sugiere Docuten:
+ *  "Porte ruta RT0001_2026_X S.L. -AZA.pdf"): quita caracteres prohibidos y rutas. */
+function nombreFicheroSeguro(nombre: string): string {
+  const sinControl = [...nombre].map((c) => (c.charCodeAt(0) < 32 ? '_' : c)).join('');
+  const limpio = sinControl
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/^\.+/, '')
+    .trim();
+  return limpio === '' ? 'documento' : limpio.slice(0, 180);
 }
 
 /** Evita que un pedido/albaran con caracteres raros rompa el nombre de fichero. */
@@ -50,22 +63,30 @@ function sanitizar(valor: string): string {
  * actual y se registra `watcher.jsonSink.destinoError`. Sin `destino` (situacion actual, mientras
  * AZA no lo defina) el borrado es directo, como antes.
  */
-export function createJsonFileSink(dir: string, logger: Logger, destino?: DestinoPersistencia): WatcherSink {
-  let dirListo: Promise<void> | undefined;
-  const asegurarDir = (): Promise<void> => {
-    if (!dirListo) {
-      dirListo = mkdir(dir, { recursive: true }).then(() => undefined);
+export function createJsonFileSink(
+  dir: string,
+  logger: Logger,
+  destino?: DestinoPersistencia,
+  /** Carpeta aparte para los JSON del DECA de rutas (por defecto, la misma que `dir`). */
+  rutasDecaDir: string = dir,
+): WatcherSink {
+  const dirsListos = new Map<string, Promise<void>>();
+  const asegurarDir = (carpeta: string): Promise<void> => {
+    let listo = dirsListos.get(carpeta);
+    if (!listo) {
+      listo = mkdir(carpeta, { recursive: true }).then(() => undefined);
+      dirsListos.set(carpeta, listo);
     }
-    return dirListo;
+    return listo;
   };
 
   /** El timestamp va PRIMERO en el nombre de fichero (no al final) para que el orden alfabetico
    *  (el que usa cualquier explorador de ficheros, incluido el de VSCode, al ordenar "por nombre")
    *  coincida con el orden cronologico, sin tener que ordenar "por fecha de modificacion" a mano. */
-  const guardar = async (sufijo: string, data: unknown): Promise<void> => {
-    await asegurarDir();
+  const guardar = async (sufijo: string, data: unknown, carpeta: string = dir): Promise<void> => {
+    await asegurarDir(carpeta);
     const nombre = `${timestampParaNombre()}--${sufijo}.json`;
-    const ruta = join(dir, nombre);
+    const ruta = join(carpeta, nombre);
     await writeFile(ruta, JSON.stringify(data, null, 2), 'utf-8');
     logger.info('Evento del watcher guardado en JSON', {
       operacion: 'watcher.jsonSink.guardado',
@@ -77,10 +98,10 @@ export function createJsonFileSink(dir: string, logger: Logger, destino?: Destin
   /** Borra todos los ficheros `*--<sufijo>.json` de la carpeta (los eventos previos de un mismo
    *  pedido/albaran, ahora que el timestamp va al principio del nombre en vez de al final).
    *  Tolerante a que la carpeta aun no exista (nada que borrar todavia). */
-  const borrarFicherosDe = async (sufijo: string): Promise<void> => {
+  const borrarFicherosDe = async (sufijo: string, carpeta: string = dir): Promise<void> => {
     let nombres: string[];
     try {
-      nombres = await readdir(dir);
+      nombres = await readdir(carpeta);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         return;
@@ -91,7 +112,7 @@ export function createJsonFileSink(dir: string, logger: Logger, destino?: Destin
     if (propios.length === 0) {
       return;
     }
-    await Promise.all(propios.map((nombre) => rm(join(dir, nombre))));
+    await Promise.all(propios.map((nombre) => rm(join(carpeta, nombre))));
     logger.info('Ficheros de eventos del watcher borrados', {
       operacion: 'watcher.jsonSink.borrado',
       resultado: 'OK',
@@ -171,6 +192,58 @@ export function createJsonFileSink(dir: string, logger: Logger, destino?: Destin
         Boolean(result.estado && ESTADOS_FINALES_RECEPCION.has(result.estado)),
         () => (destino as DestinoPersistencia).guardarAlbaran(result),
       ),
+    // DECA de una ruta consultada: un JSON por ruta (el mas reciente), sin estado final.
+    onRutaDecaActualizada: async (result: RutaDecaActualizada) => {
+      const nombreRuta = sanitizar(result.numeroRuta);
+      const sufijo = `rutadeca-${nombreRuta}`;
+      // Una carpeta por ruta: dentro, el JSON (con la consulta a la API y los datos) y los
+      // ficheros descargados de Docuten.
+      const carpetaRuta = join(rutasDecaDir, nombreRuta);
+      await enCola(sufijo, async () => {
+        await asegurarDir(carpetaRuta);
+        const { descargas, ...resto } = result;
+        const metadatos = [];
+        // Nombre -> huella de lo ya escrito en ESTA pasada: las dos variantes (include=all y simple)
+        // suelen devolver el mismo documento y no se duplica el fichero.
+        const escritos = new Map<string, string>();
+        const guardarFichero = async (nombreDeseado: string, datos: Buffer, variante: string): Promise<string> => {
+          const huella = createHash('sha256').update(datos).digest('hex');
+          let nombre = nombreFicheroSeguro(nombreDeseado);
+          const previo = escritos.get(nombre);
+          if (previo !== undefined && previo !== huella) {
+            // Mismo nombre pero contenido distinto: se distingue por la variante.
+            const punto = nombre.lastIndexOf('.');
+            nombre = punto > 0 ? `${nombre.slice(0, punto)} (${variante})${nombre.slice(punto)}` : `${nombre} (${variante})`;
+          }
+          if (escritos.get(nombre) !== huella) {
+            await writeFile(join(carpetaRuta, nombre), datos);
+            escritos.set(nombre, huella);
+            logger.info('Documento de Docuten guardado', {
+              operacion: 'watcher.jsonSink.documentoGuardado',
+              resultado: 'OK',
+              ruta: join(carpetaRuta, nombre),
+              bytes: datos.length,
+            });
+          }
+          return nombre;
+        };
+        for (const d of descargas) {
+          const { datos, documentos, ...meta } = d;
+          const ficheros: Array<{ fichero: string; documentType?: string; bytes: number }> = [];
+          for (const [i, doc] of (documentos ?? []).entries()) {
+            const nombre = doc.fileName || `docuten-${d.shipmentId}-${d.variante}-${i + 1}.pdf`;
+            ficheros.push({ fichero: await guardarFichero(nombre, doc.datos, d.variante), documentType: doc.documentType, bytes: doc.bytes });
+          }
+          if (datos) {
+            const nombre = `docuten-${d.shipmentId}-${d.variante}.${d.extension}`;
+            ficheros.push({ fichero: await guardarFichero(nombre, datos, d.variante), bytes: datos.length });
+          }
+          metadatos.push({ ...meta, ficheros });
+        }
+        await borrarFicherosDe(sufijo, carpetaRuta);
+        await guardar(sufijo, { ...resto, descargas: metadatos }, carpetaRuta);
+      });
+    },
     // Ruta enviada sin pedidos en LUX: un JSON por ruta (el mas reciente), sin estado final.
     onRutaEnviadaSinPedidos: async (result: RutaEnviadaSinPedidos) => {
       const sufijo = `ruta-${sanitizar(result.idRuta)}`;
