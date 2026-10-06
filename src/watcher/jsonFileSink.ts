@@ -1,4 +1,4 @@
-import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { buscarCarpetaDeRuta, nombreCarpetaRuta, prefijoFecha } from './carpetasDeca';
@@ -181,20 +181,55 @@ export function createJsonFileSink(
     await borrarFicherosDe(sufijo);
   };
 
-  const procesar = (sufijo: string, data: unknown, esFinal: boolean, persistir: () => Promise<void>): Promise<void> =>
-    enCola(sufijo, () => procesarSinCola(sufijo, data, esFinal, persistir));
+  /**
+   * El JSON se nombra por numero de pedido/albaran, pero ese numero puede repetirse con DISTINTO
+   * propietario (p.ej. '05102026' en AMARI, id 43360, y en ANDRANIS, id 43180). Si ya hay un JSON de ese
+   * numero que pertenece a OTRO id, este se guarda aparte (`<sufijo>_<id>`) en vez de pisarlo. Todo se
+   * serializa por el sufijo base, asi dos eventos simultaneos no se saltan la comprobacion.
+   */
+  const procesarPorId = (
+    base: string,
+    clave: 'idPedido' | 'idAlbaran',
+    id: string | undefined,
+    data: unknown,
+    esFinal: boolean,
+    persistir: () => Promise<void>,
+  ): Promise<void> =>
+    enCola(base, async () => {
+      let sufijo = base;
+      if (id && id !== '0') {
+        try {
+          const existentes = (await readdir(dir)).filter((n) => n.endsWith(`--${base}.json`)).sort();
+          const ultimo = existentes.at(-1);
+          if (ultimo) {
+            const previo = JSON.parse(await readFile(join(dir, ultimo), 'utf-8')) as Record<string, string | undefined>;
+            const idPrevio = previo[clave];
+            if (idPrevio && idPrevio !== '0' && idPrevio !== id) {
+              sufijo = `${base}_${sanitizar(id)}`;
+            }
+          }
+        } catch {
+          // carpeta aun inexistente o JSON ilegible: se usa el nombre base
+        }
+      }
+      await procesarSinCola(sufijo, data, esFinal, persistir);
+    });
 
   return {
     onExpedicionActualizada: (result: ExpedicionActualizada) =>
-      procesar(
+      procesarPorId(
         `expedicion-${sanitizar(result.pedido)}`,
+        'idPedido',
+        result.idPedido,
         result,
         borrarFinales && Boolean(result.estado && ESTADOS_FINALES_EXPEDICION.has(result.estado)),
         () => (destino as DestinoPersistencia).guardarExpedicion(result),
       ),
     onAlbaranActualizado: (result: AlbaranActualizado) =>
-      procesar(
+      procesarPorId(
         `recepcion-${sanitizar(result.albaran)}`,
+        'idAlbaran',
+        result.idAlbaran,
         result,
         borrarFinales && Boolean(result.estado && ESTADOS_FINALES_RECEPCION.has(result.estado)),
         () => (destino as DestinoPersistencia).guardarAlbaran(result),

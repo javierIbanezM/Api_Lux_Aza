@@ -91,6 +91,19 @@ describe('ExpedicionesService', () => {
     expect(llamadasAdr).toBe(2); // una por tipo (LQ y ADR), cacheadas para las 4 llamadas
   });
 
+  it('obtenerResumenListadoExpedicion: con el MISMO numero de pedido en dos propietarios devuelve la fila del id pedido (no la primera)', async () => {
+    mock.updateOptions({
+      onProc: (proc) =>
+        proc === 'p_expedicionesAza'
+          ? { status: 200, body: [{ id: '43360', pedido: '05102026', propietario: 'AMARI' }, { id: '43180', pedido: '05102026', propietario: 'ANDRANIS' }] }
+          : { status: 200, body: [] },
+    });
+    expect((await service.obtenerResumenListadoExpedicion('05102026', 'SAGUNTO', '43180'))?.propietario).toBe('ANDRANIS');
+    expect((await service.obtenerResumenListadoExpedicion('05102026', 'SAGUNTO', '43360'))?.propietario).toBe('AMARI');
+    expect(await service.obtenerResumenListadoExpedicion('05102026', 'SAGUNTO', '99999')).toBeUndefined(); // ninguna es suya
+    expect((await service.obtenerResumenListadoExpedicion('05102026', 'SAGUNTO'))?.id).toBe('43360'); // sin id: comportamiento anterior
+  });
+
   it('obtenerDatosRuta no llama a LUX si no hay ruta o esta "NO ASIGNADA", y tolera el cuerpo vacio de LUX', async () => {
     const llamadas: string[] = [];
     mock.updateOptions({

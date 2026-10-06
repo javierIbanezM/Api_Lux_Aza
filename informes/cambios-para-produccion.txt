@@ -149,6 +149,20 @@ deploy/instalar-arranque-pm2.ps1 y la parte del README sobre PM2. Llevar el comm
      peligrosidad) y JSON del watcher (campo peligrosidad). Tests: 268 en verde.
    - Requiere reiniciar API y watcher: pm2 restart all
 
+5m. DECA INCOMPLETOS REVISADOS EN CADA ARRANQUE + EVENTOS DUPLICADOS + AUDITORIA  (SIN COMMIT)
+   - watcher-rutas-deca: al arrancar y cada WATCHER_DECA_PENDIENTES_MS (10 min) se revisan las carpetas cuyo
+     ultimo JSON tiene un envio sin shipmentId o, con shipmentId, sin ningun PDF; se re-consultan en LUX y se
+     descarga lo que falte, hasta que cada carpeta tenga envio y PDF. Los envios ERROR/ANULADO no cuentan.
+     La reconsulta corta tras un evento tambien espera ahora al documento descargado. (decaPendientes.ts)
+   - FALLO REAL CORREGIDO: dos pedidos con el MISMO numero y distinto propietario (p.ej. 05102026: AMARI id
+     43360 y ANDRANIS id 43180) compartian JSON y fila del listado, y uno pisaba al otro (se perdio el JSON
+     de 43360 y el de 43180 llevaba el listado de AMARI). Ahora el listado se elige por id y el segundo JSON
+     se guarda como <fecha>--expedicion-<pedido>_<id>.json. Igual para recepciones.
+   - scripts/auditarEventos.ts: compara TODOS los eventos de la whitelist de los logs (lux.log.N de LUX y
+     LUX_mobile) con los JSON de watcher-events; --reparar regenera los que falten. Solo lectura sin --reparar.
+     Resultado desde 05/10 14:00: 861 pedidos/albaranes, 855 OK, 5 recientes en cola, 1 sin JSON (43360).
+   - Tests: 280 en verde. Reiniciar API y watcher: pm2 restart all
+
 6. DOCS Y OTROS: README.md, informes/mejoras-pendientes.txt, .gitignore (bruno/). La coleccion de
    Bruno (bruno/docuten/) NO se versiona: lleva la clave.
 

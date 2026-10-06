@@ -190,7 +190,7 @@ export class RecepcionesService {
       this.obtenerLineasRecepcion(idAlbaran, almacen),
       this.obtenerHUsRecepcion(idAlbaran, almacen),
     ]);
-    const resumenListado = await this.obtenerResumenListadoRecepcion(cabecera.albaran, almacen);
+    const resumenListado = await this.obtenerResumenListadoRecepcion(cabecera.albaran, almacen, idAlbaran);
     return { cabecera, datosExtra, lineas, hus, resumenListado };
   }
 
@@ -238,7 +238,7 @@ export class RecepcionesService {
    * para resolver altas de recepcion (idAlbaran='0' en el log, solo se conoce el texto del
    * albaran hasta que LUX asigna el id real) -- ver docs/lux-api-analysis.md §16.
    */
-  async obtenerResumenListadoRecepcion(albaran: string, almacen?: string): Promise<RecepcionListItem | undefined> {
+  async obtenerResumenListadoRecepcion(albaran: string, almacen?: string, idAlbaran?: string): Promise<RecepcionListItem | undefined> {
     if (!albaran) {
       return undefined;
     }
@@ -248,6 +248,10 @@ export class RecepcionesService {
       { albaran },
       { operacion: 'recepciones.obtenerResumenListadoRecepcion', almacen },
     );
+    // El mismo numero de albaran puede repetirse con distinto propietario: con id conocido, SU fila.
+    if (idAlbaran && idAlbaran !== '0') {
+      return (rows as RecepcionListItem[]).find((r) => r.id === idAlbaran);
+    }
     return rows[0] as RecepcionListItem | undefined;
   }
 

@@ -541,6 +541,57 @@ describe('watcher/jsonFileSink: por defecto NO se borra por estado final (conser
   });
 });
 
+describe('watcher/jsonFileSink: mismo numero de pedido/albaran con distinto id (distinto propietario)', () => {
+  const exp = (idPedido: string, propietario: string, estado = 'ASIGNADO') =>
+    ({ idPedido, pedido: '05102026', almacen: 'SAGUNTO', propietario, estado, motivos: ['expedicionCabeceraActualizada' as const], lineas: [], contenedores: [] }) as never;
+
+  it('dos pedidos con el mismo numero no se pisan: cada uno conserva su JSON (el segundo con sufijo _<id>)', async () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    try {
+      const sink = createJsonFileSink(join(raiz, 'events'), createLogger('error'), undefined, raiz);
+      await sink.onExpedicionActualizada?.(exp('43180', 'ANDRANIS'));
+      await sink.onExpedicionActualizada?.(exp('43360', 'AMARI'));
+      const leer = (n: string) => JSON.parse(readFileSync(join(raiz, 'events', n), 'utf-8'));
+      const nombres = readdirSync(join(raiz, 'events')).sort();
+      expect(nombres).toHaveLength(2);
+      expect(nombres.some((n) => n.endsWith('--expedicion-05102026.json'))).toBe(true);
+      expect(nombres.some((n) => n.endsWith('--expedicion-05102026_43360.json'))).toBe(true);
+      expect(nombres.map((n) => leer(n).idPedido).sort()).toEqual(['43180', '43360']);
+    } finally {
+      rmSync(raiz, { recursive: true, force: true });
+    }
+  });
+
+  it('nuevos eventos de cada pedido reemplazan SU json (siguen siendo 2 ficheros, sin duplicados)', async () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    try {
+      const sink = createJsonFileSink(join(raiz, 'events'), createLogger('error'), undefined, raiz);
+      await sink.onExpedicionActualizada?.(exp('43180', 'ANDRANIS'));
+      await sink.onExpedicionActualizada?.(exp('43360', 'AMARI'));
+      await sink.onExpedicionActualizada?.(exp('43180', 'ANDRANIS', 'CERRADO'));
+      await sink.onExpedicionActualizada?.(exp('43360', 'AMARI', 'CERRADO'));
+      const nombres = readdirSync(join(raiz, 'events'));
+      expect(nombres).toHaveLength(2);
+      for (const n of nombres) {
+        expect(JSON.parse(readFileSync(join(raiz, 'events', n), 'utf-8')).estado).toBe('CERRADO');
+      }
+    } finally {
+      rmSync(raiz, { recursive: true, force: true });
+    }
+  });
+
+  it('eventos SIMULTANEOS de los dos pedidos tampoco se pisan', async () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    try {
+      const sink = createJsonFileSink(join(raiz, 'events'), createLogger('error'), undefined, raiz);
+      await Promise.all([sink.onExpedicionActualizada?.(exp('43180', 'ANDRANIS')), sink.onExpedicionActualizada?.(exp('43360', 'AMARI'))]);
+      expect(readdirSync(join(raiz, 'events'))).toHaveLength(2);
+    } finally {
+      rmSync(raiz, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('watcher/jsonFileSink: carpetas de rutas ordenadas por fecha', () => {
   const ruta = (nombre: string, fechaCreacion: string) => ({
     numeroRuta: nombre,

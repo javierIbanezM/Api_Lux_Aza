@@ -182,7 +182,7 @@ export class ExpedicionesService {
       this.obtenerLineasExpedicion(idPedido, almacen),
       this.obtenerContenedoresExpedicion(idPedido, almacen),
     ]);
-    const resumenListado = await this.obtenerResumenListadoExpedicion(cabecera.pedido, almacen);
+    const resumenListado = await this.obtenerResumenListadoExpedicion(cabecera.pedido, almacen, idPedido);
     // Best effort: un fallo al leer la ruta no debe impedir ver el resto del detalle.
     const [datosRuta, decaRuta, peligrosidad] = await Promise.all([
       this.obtenerDatosRuta(resumenListado?.ruta, almacen).catch(() => undefined),
@@ -322,7 +322,7 @@ export class ExpedicionesService {
    * Filtra por `pedido` exacto (sin comodin "%"): la documentacion no permite filtrar el listado
    * por `id`, solo por `pedido` (texto). Si `pedido` viene vacio, no llama a LUX.
    */
-  async obtenerResumenListadoExpedicion(pedido: string, almacen?: string): Promise<ExpedicionListItem | undefined> {
+  async obtenerResumenListadoExpedicion(pedido: string, almacen?: string, idPedido?: string): Promise<ExpedicionListItem | undefined> {
     if (!pedido) {
       return undefined;
     }
@@ -332,6 +332,11 @@ export class ExpedicionesService {
       { pedido },
       { operacion: 'expediciones.obtenerResumenListadoExpedicion', almacen },
     );
+    // El mismo numero de pedido puede existir con distinto propietario (p.ej. '05102026' en AMARI y en
+    // ANDRANIS): si se conoce el id, se elige SU fila; si no hay ninguna con ese id, ninguna (no la de otro).
+    if (idPedido && idPedido !== '0') {
+      return (rows as ExpedicionListItem[]).find((r) => r.id === idPedido);
+    }
     return rows[0] as ExpedicionListItem | undefined;
   }
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AuthManager } from '../../src/auth';
@@ -46,6 +46,7 @@ describe('watcher/LuxActionWatcher', () => {
     retryDelayMs: 60_000,
     decaRecheckMs: 60,
     decaRecheckMax: 20,
+    decaPendientesMs: 600_000,
     stateDir: '',
     rutasDecaDir: '',
     revisarFicherosDeca: 3,
@@ -831,6 +832,94 @@ describe('watcher/LuxActionWatcher', () => {
     expect(resultado.descargas.map((d: { variante: string; ok: boolean }) => [d.variante, d.ok])).toEqual([['include-all', true], ['simple', false]]);
   });
 
+  describe('DECA incompletos: revision en cada arranque y periodica', () => {
+    const crearCarpeta = (nombre: string, deca: unknown[], conPdf = false): string => {
+      const carpeta = join(dir, 'rutas-deca', nombre);
+      mkdirSync(carpeta, { recursive: true });
+      writeFileSync(
+        join(carpeta, '2026-10-05T10-00-00-000--rutadeca-RT9.json'),
+        JSON.stringify({ numeroRuta: 'RT9_2026_X', almacen: 'SAGUNTO', consultadoEn: '2026-10-05T10:00:00Z', deca, envios: [], descargas: [] }),
+      );
+      if (conPdf) {
+        writeFileSync(join(carpeta, 'Porte.pdf'), 'PDF');
+      }
+      return carpeta;
+    };
+
+    const mockDeca = (shipmentId: string, contador?: { n: number }) =>
+      mock.updateOptions({
+        onProc: (proc, body) => {
+          if (proc === 'p_expedicionesAza') {
+            return { status: 200, body: [{ id: '1', pedido: 'P1', estado: 'ENVIADO', ruta: 'RT9_2026_X' }] };
+          }
+          if (proc === 'p_expRutasDeca' && body.accion === 'SELECT') {
+            if (contador) {
+              contador.n += 1;
+            }
+            return { status: 200, body: [{ shipmentReference: 'RT9_2026_X-AZA', estado: 'ENVIADO', shipmentId, fechaCreacion: '05/10/2026 10:00:00' }] };
+          }
+          return { status: 200, body: [] };
+        },
+      });
+
+    const arrancarConDocuten = (onRutaDecaActualizada: ReturnType<typeof vi.fn>, descargarDocumentos: ReturnType<typeof vi.fn>): void => {
+      const appConfig = buildTestConfig({ luxBaseUrl: baseUrl });
+      const luxClient = new LuxClient(appConfig, new AuthManager(appConfig, createLogger('error')), createLogger('error'));
+      const exp = new ExpedicionesService(luxClient);
+      watcher = new LuxActionWatcher(
+        { ...config, rutasDecaDir: join(dir, 'rutas-deca') }, luxClient, exp, new RecepcionesService(luxClient), createLogger('debug'),
+        { onRutaDecaActualizada }, new RutasService(luxClient, exp), { descargarDocumentos },
+      );
+      watcher.start();
+    };
+
+    const ok = (shipmentId: string) => [{ shipmentId, variante: 'include-all' as const, url: 'u', status: 200, ok: true, extension: 'json', bytes: 1 }];
+
+    it('al arrancar, una carpeta con envio SIN shipmentId se re-consulta y se descarga el PDF cuando LUX ya lo tiene', async () => {
+      crearCarpeta('2026-10-05T10-00-00--RT9_2026_X', [{ shipmentReference: 'RT9_2026_X-AZA', estado: 'PENDIENTE ENVIO', shipmentId: '' }]);
+      mockDeca('SHIP-7');
+      const onRutaDecaActualizada = vi.fn();
+      const descargarDocumentos = vi.fn(async (id: string) => ok(id));
+
+      arrancarConDocuten(onRutaDecaActualizada, descargarDocumentos);
+
+      await waitUntil(() => onRutaDecaActualizada.mock.calls.length > 0, 8000);
+      expect(onRutaDecaActualizada.mock.calls[0]?.[0].numeroRuta).toBe('RT9_2026_X');
+      expect(onRutaDecaActualizada.mock.calls[0]?.[0].deca[0].shipmentId).toBe('SHIP-7');
+      expect(descargarDocumentos).toHaveBeenCalledWith('SHIP-7');
+      expect(logLines.some((l) => l.operacion === 'watcher.decaPendientes' && l.sinShipmentId === 1)).toBe(true);
+    });
+
+    it('al arrancar, una carpeta con shipmentId pero SIN PDF vuelve a descargar el documento', async () => {
+      crearCarpeta('2026-10-05T10-00-00--RT9_2026_X', [{ shipmentReference: 'RT9_2026_X-AZA', estado: 'ENVIADO', shipmentId: 'SHIP-8' }]);
+      mockDeca('SHIP-8');
+      const onRutaDecaActualizada = vi.fn();
+      const descargarDocumentos = vi.fn(async (id: string) => ok(id));
+
+      arrancarConDocuten(onRutaDecaActualizada, descargarDocumentos);
+
+      await waitUntil(() => descargarDocumentos.mock.calls.length > 0, 8000);
+      expect(descargarDocumentos).toHaveBeenCalledWith('SHIP-8');
+      expect(logLines.some((l) => l.operacion === 'watcher.decaPendientes' && l.sinPdf === 1)).toBe(true);
+    });
+
+    it('una carpeta completa (envio con shipmentId y PDF) o con envios fallidos (ERROR/ANULADO) NO se re-consulta', async () => {
+      crearCarpeta('2026-10-05T10-00-00--RT1_2026_X', [{ estado: 'ENVIADO', shipmentId: 'S1' }], true);
+      crearCarpeta('2026-10-05T11-00-00--RT2_2026_X', [{ estado: 'ERROR', shipmentId: '' }, { estado: 'ANULADO', shipmentId: '' }]);
+      const contador = { n: 0 };
+      mockDeca('S1', contador);
+      const onRutaDecaActualizada = vi.fn();
+      const descargarDocumentos = vi.fn(async (id: string) => ok(id));
+
+      arrancarConDocuten(onRutaDecaActualizada, descargarDocumentos);
+      await new Promise((r) => setTimeout(r, 800));
+
+      expect(onRutaDecaActualizada).not.toHaveBeenCalled();
+      expect(contador.n).toBe(0);
+      expect(logLines.some((l) => l.operacion === 'watcher.decaPendientes' && l.pendientes === 0)).toBe(true);
+    });
+  });
+
   /** Espera a que rutas-procesadas.json tenga `n` rutas anotadas (se escribe DESPUES de entregar al sink). */
   const esperarRegistro = async (n: number): Promise<void> => {
     await waitUntil(() => {
@@ -861,7 +950,9 @@ describe('watcher/LuxActionWatcher', () => {
         return { status: 200, body: [] };
       },
     });
-    const descargarDocumentos = vi.fn(async () => []);
+    const descargarDocumentos = vi.fn(async (shipmentId: string) => [
+      { shipmentId, variante: 'include-all' as const, url: 'u', status: 200, ok: true, extension: 'json', bytes: 1 },
+    ]);
     const onRutaDecaActualizada = vi.fn();
     const appConfig = buildTestConfig({ luxBaseUrl: baseUrl });
     const luxClient = new LuxClient(appConfig, new AuthManager(appConfig, createLogger('error')), createLogger('error'));

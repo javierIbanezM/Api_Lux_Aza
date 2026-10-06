@@ -12,6 +12,7 @@ import { limpiarFiltroRuta } from '../services/rutas';
 import { LuxAuthError, LuxHttpError, LuxNetworkError } from '../lux/errors';
 import type { Expedicion, ExpedicionContenedor, ExpedicionLinea, Recepcion, RecepcionHU, RecepcionLinea } from '../lux/models';
 import { LogTailer } from './logTailer';
+import { buscarDecaPendientes } from './decaPendientes';
 import { matchActionLine, type ActionEventType, type DetectedEvent } from './actionPatterns';
 import { parseLogTime } from './logTime';
 import { RutasProcesadas } from './rutasProcesadas';
@@ -46,9 +47,20 @@ const COMMIT_INTERVAL_MS = 5_000;
 /** Tope del retraso entre reintentos de un refresco fallido. */
 const MAX_RETRY_DELAY_MS = 5 * 60_000;
 
-/** DECA a medias: algun envio sin shipmentId (`PENDIENTE ENVIO`: el envio a Docuten no se ha creado). */
-function decaIncompleto(c: RutaDecaConsulta): boolean {
-  return c.deca.some((d) => (d.shipmentId ?? '').trim() === '');
+/** Envios fallidos (LUX/Docuten): nunca tendran shipmentId ni documento, no se espera por ellos. */
+const ESTADO_TERMINAL = /^(ANULADO|ERROR)$/i;
+
+/** DECA a medias: algun envio sin shipmentId (`PENDIENTE ENVIO`: el envio a Docuten no se ha creado) o,
+ *  con Docuten configurado, con shipmentId pero sin ningun documento descargado todavia. */
+function decaIncompleto(c: RutaDecaConsulta, descargas: DescargaDocumento[], conDocuten: boolean): boolean {
+  const envios = c.deca.filter((d) => !ESTADO_TERMINAL.test((d.estado ?? '').trim()));
+  return envios.some((d) => {
+    const id = (d.shipmentId ?? '').trim();
+    if (id === '') {
+      return true;
+    }
+    return conDocuten && !descargas.some((x) => x.shipmentId === id && x.ok);
+  });
 }
 
 /** Error de infraestructura que se resuelve esperando (LUX caido, red, token): el evento NO se
@@ -164,6 +176,8 @@ export class LuxActionWatcher {
   private readonly luxTailer: LogTailer;
   private readonly mobileTailer: LogTailer;
   private pollHandle: ReturnType<typeof setInterval> | undefined;
+  private pendientesHandle: ReturnType<typeof setInterval> | undefined;
+  private revisandoPendientes = false;
 
   constructor(
     private readonly config: WatcherConfig,
@@ -212,7 +226,59 @@ export class LuxActionWatcher {
       void this.mobileTailer.poll();
       void this.commitIfIdle();
     }, this.config.pollIntervalMs);
-    void this.revisarRutasAlArrancar();
+    // Al arrancar: primero las consultas de ruta de los logs y despues las carpetas de DECA incompletas
+    // (envio sin shipmentId o sin PDF). Y, mientras el watcher viva, se repasan cada `decaPendientesMs`.
+    void this.revisarRutasAlArrancar().finally(() => this.revisarDecaPendientes('arranque'));
+    this.pendientesHandle = setInterval(() => void this.revisarDecaPendientes('periodica'), this.config.decaPendientesMs);
+  }
+
+  /**
+   * Re-consulta las rutas de `watcher-rutas-deca` cuyo DECA no esta completo (ver `buscarDecaPendientes`)
+   * y descarga lo que falte, hasta que cada carpeta tenga su envio y su PDF. Se escalona igual que la
+   * revision de arranque (pocas rutas a la vez contra LUX).
+   */
+  private async revisarDecaPendientes(origen: 'arranque' | 'periodica'): Promise<void> {
+    if (!this.rutasService || this.parado || this.revisandoPendientes) {
+      return;
+    }
+    this.revisandoPendientes = true;
+    if (origen === 'arranque') {
+      this.arranqueEnCurso += 1;
+    }
+    try {
+      const pendientes = await buscarDecaPendientes(this.config.rutasDecaDir, this.docutenClient !== undefined);
+      if (pendientes.length > 0 || origen === 'arranque') {
+        this.logger.info('Revision de DECA incompletos en watcher-rutas-deca', {
+          operacion: 'watcher.decaPendientes',
+          resultado: 'OK',
+          origen,
+          pendientes: pendientes.length,
+          sinShipmentId: pendientes.filter((p) => p.motivo === 'sin-shipmentId').length,
+          sinPdf: pendientes.filter((p) => p.motivo === 'sin-pdf').length,
+        });
+      }
+      for (const p of pendientes) {
+        if (this.parado) {
+          break;
+        }
+        this.scheduleRefresh({ domain: 'ruta', ruta: p.numeroRuta, almacen: p.almacen, eventoEn: Date.now() }, 'rutaConsultada');
+        while (!this.parado && this.rutasEnCurso() >= MAX_RUTAS_EN_ARRANQUE) {
+          await new Promise((resolve) => setTimeout(resolve, 150));
+        }
+      }
+    } catch (err) {
+      this.logger.warn('No se pudo revisar los DECA incompletos', {
+        operacion: 'watcher.decaPendientes',
+        resultado: 'ERROR',
+        origen,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      this.revisandoPendientes = false;
+      if (origen === 'arranque') {
+        this.arranqueEnCurso -= 1;
+      }
+    }
   }
 
   /**
@@ -324,12 +390,26 @@ export class LuxActionWatcher {
     }
   }
 
+  /**
+   * Re-consulta un pedido o albaran concreto (por su id de LUX) y lo entrega al sink, sin esperar a un
+   * evento del log. Sirve para reparar lo que la auditoria (scripts/auditarEventos.ts) detecte sin JSON.
+   */
+  async reprocesar(dominio: 'expedicion' | 'recepcion', id: string, almacen?: string): Promise<void> {
+    const target: PendingTarget = dominio === 'expedicion' ? { domain: 'expedicion', idPedido: id, almacen } : { domain: 'recepcion', idAlbaran: id, almacen };
+    const key = keyFor(target) as string;
+    const motivo: ActionEventType = dominio === 'expedicion' ? 'expedicionCabeceraActualizada' : 'recepcionCabeceraActualizada';
+    await this.runRefresh(key, { target, motivos: new Set([motivo]), timer: undefined as never, firstAt: Date.now(), attempts: 0 });
+  }
+
   /** Para el watcher. Si no queda nada pendiente confirma la posicion de los logs; lo pendiente
    *  se descarta SIN confirmar, asi que se releera y reprocesara en el siguiente arranque. */
   async stop(): Promise<void> {
     this.parado = true;
     if (this.pollHandle) {
       clearInterval(this.pollHandle);
+    }
+    if (this.pendientesHandle) {
+      clearInterval(this.pendientesHandle);
     }
     const idle = this.isIdle();
     for (const { timer } of this.pending.values()) {
@@ -616,12 +696,15 @@ export class LuxActionWatcher {
           duracionMs: Date.now() - startedAt,
         });
         let sinkOk = true;
+        let incompleto = false;
         for (const c of conDatos) {
-          sinkOk = (await this.guardarDeca(c, target.ruta, target.almacen, target.terminal, motivosList)) && sinkOk;
+          const r = await this.guardarDeca(c, target.ruta, target.almacen, target.terminal, motivosList);
+          sinkOk = r.sinkOk && sinkOk;
+          incompleto = decaIncompleto(c, r.descargas, this.docutenClient !== undefined) || incompleto;
         }
         if (!sinkOk) {
           this.scheduleRetry(key, entry);
-        } else if (conDatos.some(decaIncompleto) && this.scheduleRecheck(key, entry)) {
+        } else if (incompleto && this.scheduleRecheck(key, entry)) {
           // DECA a medias (envio PENDIENTE / sin shipmentId): se vuelve a consultar sin darlo por procesado.
         } else {
           // Ruta procesada hasta esta consulta: la revision de arranque no la repetira.
@@ -640,10 +723,12 @@ export class LuxActionWatcher {
           motivos,
           duracionMs: Date.now() - startedAt,
         });
-        const sinkOk = c ? await this.guardarDeca(c, `GENERAR_DECA id=${target.idRuta}`, target.almacen, target.terminal, motivosList) : true;
-        if (!sinkOk) {
+        const r = c
+          ? await this.guardarDeca(c, `GENERAR_DECA id=${target.idRuta}`, target.almacen, target.terminal, motivosList)
+          : { sinkOk: true, descargas: [] as DescargaDocumento[] };
+        if (!r.sinkOk) {
           this.scheduleRetry(key, entry);
-        } else if (c && decaIncompleto(c) && this.scheduleRecheck(key, entry)) {
+        } else if (c && decaIncompleto(c, r.descargas, this.docutenClient !== undefined) && this.scheduleRecheck(key, entry)) {
           // DECA a medias: se vuelve a consultar sin darlo por procesado.
         } else if (c) {
           // Solo se da por procesado si el DECA existia; si no, la revision de arranque lo reintenta.
@@ -742,16 +827,16 @@ export class LuxActionWatcher {
     return true;
   }
 
-  /** Descarga los documentos del DECA y lo entrega al sink. Devuelve false si el sink fallo (se reintenta). */
+  /** Descarga los documentos del DECA y lo entrega al sink. `sinkOk` false = el sink fallo (se reintenta). */
   private async guardarDeca(
     c: RutaDecaConsulta,
     consultaOriginal: string,
     almacen: string | undefined,
     terminal: string | undefined,
     motivosList: ActionEventType[],
-  ): Promise<boolean> {
+  ): Promise<{ sinkOk: boolean; descargas: DescargaDocumento[] }> {
     const descargas = await this.descargarDocumentos(c.deca.map((d) => d.shipmentId));
-    return this.callSink(
+    const sinkOk = await this.callSink(
       () =>
         this.sink.onRutaDecaActualizada?.({
           numeroRuta: c.numeroRuta,
@@ -768,6 +853,7 @@ export class LuxActionWatcher {
       'ruta',
       true,
     );
+    return { sinkOk, descargas };
   }
 
   /** Descarga de Docuten los documentos de cada envio (shipmentId) del DECA de una ruta. Un fallo
@@ -869,7 +955,7 @@ export class LuxActionWatcher {
       throw new Error('No se pudo determinar el numero de pedido para re-consultar (sin idPedido ni pedido)');
     }
 
-    const resumen = await this.expedicionesService.obtenerResumenListadoExpedicion(pedido, almacen);
+    const resumen = await this.expedicionesService.obtenerResumenListadoExpedicion(pedido, almacen, idPedidoDirecto);
     const idPedido = idPedidoDirecto ?? resumen?.id;
 
     let lineas: ExpedicionLinea[] = [];
@@ -930,7 +1016,7 @@ export class LuxActionWatcher {
       throw new Error('No se pudo determinar el numero de albaran para re-consultar (sin idAlbaran ni albaran)');
     }
 
-    const resumen = await this.recepcionesService.obtenerResumenListadoRecepcion(albaran, almacen);
+    const resumen = await this.recepcionesService.obtenerResumenListadoRecepcion(albaran, almacen, idAlbaranDirecto);
     const idAlbaran = idAlbaranDirecto ?? resumen?.id;
 
     let lineas: RecepcionLinea[] = [];
