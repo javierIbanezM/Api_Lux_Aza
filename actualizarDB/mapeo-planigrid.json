@@ -1,0 +1,851 @@
+{
+  "descripcion": "Analisis del mapeo entre los datos que recoge la API de LUX/Whales (watcher) y las columnas de la tabla de planificacion (planigrid), para decidir como hacer UPDATE / INSERT (upsert) y que campos coger.",
+  "generadoEn": "2026-10-06",
+  "pedidoDeReferencia": {
+    "idPedidoLux": "43434",
+    "pedido": "CREN00204978",
+    "almacen": "SAGUNTO",
+    "estadoLux": "ENVIADO",
+    "ruta": "RT00013792_2026_ENRIQUE REDOLAR"
+  },
+  "filaRealDeLaTabla": {
+    "id": "309369",
+    "idplanigrid": "192070",
+    "propietario": "COSMEWAX",
+    "pedido": "CREN00204978",
+    "consignacion": "RT00013792_2026_ENRIQUE REDOLAR",
+    "fechatransporte": "2026-10-06 10:00:00.000",
+    "servicelevel": "NORMAL",
+    "transportista": "ENRIQUE REDOLAR",
+    "bloqueo": "",
+    "idExpPedidoCabecera": "43434",
+    "almacen": "SAGUNTO",
+    "procesado": "1",
+    "comentariotransportista": "",
+    "estado": "6",
+    "actualizado": "1",
+    "destino": "Valencia",
+    "playa": "S204B",
+    "numSerieExpedicion": "954634",
+    "bultos": "4",
+    "Purchase_Order": "",
+    "fecharuta": "2026-10-06 13:55:46.257",
+    "manipulados": null,
+    "peligrosidad": null,
+    "idplanigridantiguo": null,
+    "Palets": "4"
+  },
+  "ejemploDeAbril_filaAnterior": {
+    "nota": "Fila que se paso primero; su pedido ya no esta en LUX (0 filas en los 5 almacenes), no se pudo cotejar.",
+    "id": "271614",
+    "idplanigrid": "171654",
+    "propietario": "00180107",
+    "pedido": "CH255425336570",
+    "consignacion": "26042713H7",
+    "fechatransporte": "2026-04-27 13:00:00.000",
+    "servicelevel": "SUS MEDIOS",
+    "transportista": "SUSMEDIOS",
+    "bloqueo": "NINGUNO",
+    "idExpPedidoCabecera": "1005147",
+    "almacen": "SAGUNTO",
+    "procesado": "1",
+    "comentariotransportista": "SUS MEDIOS",
+    "estado": "6",
+    "actualizado": "1",
+    "destino": "SABLÉ SUR SARTHE",
+    "playa": "S103",
+    "numSerieExpedicion": "918344",
+    "bultos": "1",
+    "Purchase_Order": "LIVRAISON 29/04",
+    "fecharuta": "2026-04-27 15:57:45.950",
+    "manipulados": null,
+    "peligrosidad": null,
+    "idplanigridantiguo": null,
+    "Palets": null,
+    "diferenciasConLaFilaReal": "En esta fila propietario es un codigo (00180107), consignacion no es la ruta, bloqueo vale NINGUNO, comentariotransportista y Purchase_Order tienen texto y el idExpPedidoCabecera no es un id de LUX actual. Pueden ser datos antiguos o de otra version del proceso: confirmar."
+  },
+  "mapeoColumnas": [
+    {
+      "columna": "id",
+      "origen": null,
+      "estado": "automatico",
+      "nota": "Identidad de la tabla; no se informa en el INSERT."
+    },
+    {
+      "columna": "idplanigrid",
+      "origen": null,
+      "estado": "NO_SALE_DE_LUX",
+      "ejemplo": "192070",
+      "nota": "192070 no aparece en ningun endpoint ni JSON del watcher. Es un id del planificador. La columna ADMITE NULL: un INSERT es posible sin ella; si el planificador la necesita, hace falta otra via (p.ej. cruce por pedido en la tabla del planificador)."
+    },
+    {
+      "columna": "propietario",
+      "origen": "cabecera.propietario",
+      "endpoint": "p_expCabeceraAza SELECT_ONE (idParent=idPedido)",
+      "estado": "coincide",
+      "ejemplo": "COSMEWAX",
+      "nota": "Se guarda el nombre tal cual lo da LUX (p.ej. COSMEWAX, CAMELIA o 00180107, que es un propietario de LUX cuyo nombre es ese codigo)."
+    },
+    {
+      "columna": "pedido",
+      "origen": "cabecera.pedido (o listado.pedido)",
+      "endpoint": "p_expCabeceraAza SELECT_ONE / p_expedicionesAza SELECT",
+      "estado": "coincide",
+      "ejemplo": "CREN00204978"
+    },
+    {
+      "columna": "consignacion",
+      "origen": "listado.ruta",
+      "endpoint": "p_expedicionesAza SELECT (pedido=...)",
+      "estado": "coincide",
+      "ejemplo": "RT00013792_2026_ENRIQUE REDOLAR",
+      "nota": "Es el nombre de la ruta. 'NO ASIGNADA' si el pedido aun no tiene ruta (decidir si se guarda asi o vacio)."
+    },
+    {
+      "columna": "fechatransporte",
+      "origen": "cabecera.fechaTransporte",
+      "endpoint": "p_expCabeceraAza SELECT_ONE",
+      "estado": "coincide",
+      "ejemplo": "06/10/2026 10:00:00",
+      "conversion": "dd/MM/yyyy HH:mm:ss -> datetime (2026-10-06 10:00:00.000)"
+    },
+    {
+      "columna": "servicelevel",
+      "origen": "datosExtra.serviceLevel (o listado.nivelServicio)",
+      "endpoint": "p_expCabeceraAza SELECT_INICIO (idParent=idPedido)",
+      "estado": "coincide",
+      "ejemplo": "NORMAL"
+    },
+    {
+      "columna": "transportista",
+      "origen": "cabecera.transportista",
+      "endpoint": "p_expCabeceraAza SELECT_ONE",
+      "estado": "coincide",
+      "ejemplo": "ENRIQUE REDOLAR"
+    },
+    {
+      "columna": "bloqueo",
+      "origen": "cabecera.bloqueo",
+      "endpoint": "p_expCabeceraAza SELECT_ONE",
+      "estado": "coincide",
+      "ejemplo": "",
+      "nota": "En la fila real queda VACIO. En la fila de abril valia NINGUNO: confirmar si depende del estado."
+    },
+    {
+      "columna": "idExpPedidoCabecera",
+      "origen": "idPedido de LUX (listado.id / idPedido de la cabecera)",
+      "endpoint": "p_expedicionesAza SELECT",
+      "estado": "coincide",
+      "ejemplo": "43434",
+      "nota": "En octubre = id de LUX (43434), pero en las filas de abril NO coincide (1005090 vs 5158). No usar como clave de busqueda."
+    },
+    {
+      "columna": "almacen",
+      "origen": "almacen del evento / cabecera de la llamada",
+      "estado": "coincide",
+      "ejemplo": "SAGUNTO"
+    },
+    {
+      "columna": "procesado",
+      "origen": null,
+      "estado": "FLAG_DE_CONTROL",
+      "ejemplo": "1",
+      "nota": "No sale de LUX. Decidir valor en INSERT y si el UPDATE debe reiniciarlo (puede leerlo otro proceso)."
+    },
+    {
+      "columna": "comentariotransportista",
+      "origen": "desconocido",
+      "estado": "SIN_ORIGEN_CONFIRMADO",
+      "ejemplo": "",
+      "nota": "Vacio en la fila real; en la de abril valia 'SUS MEDIOS' (= serviceLevel). Posibles: serviceLevel / observaciones / observacionesAlbaran / observacionesAlmacen. Necesita un pedido con observaciones para confirmar."
+    },
+    {
+      "columna": "estado",
+      "origen": "cabecera.estado (numerico)",
+      "endpoint": "p_expCabeceraAza SELECT_ONE",
+      "estado": "coincide",
+      "ejemplo": "6",
+      "tablaEstados": {
+        "CREACION": -1,
+        "PENDIENTE": 0,
+        "EXPEDICION": 2,
+        "DISCREPANCIAS": 3,
+        "CERRADO": 4,
+        "ASIGNADO": "4 o 5",
+        "ENVIADO": 6,
+        "PENDIENTE FALTAS": 7,
+        "ASIGNADO FALTAS": "-1 u 8",
+        "ANULADO": 9,
+        "BLOQUEADO": 15
+      },
+      "nota": "Calculada con 1.276 JSON del watcher. ASIGNADO y ASIGNADO FALTAS son ambiguos: usar cabecera.estado tal cual."
+    },
+    {
+      "columna": "actualizado",
+      "origen": null,
+      "estado": "FLAG_DE_CONTROL",
+      "ejemplo": "1",
+      "nota": "No sale de LUX. Decidir semantica."
+    },
+    {
+      "columna": "destino",
+      "origen": "listado.poblacion (o cabecera.poblacion)",
+      "endpoint": "p_expedicionesAza SELECT",
+      "estado": "coincide",
+      "ejemplo": "Valencia"
+    },
+    {
+      "columna": "playa",
+      "origen": "listado.muelle",
+      "endpoint": "p_expedicionesAza SELECT",
+      "estado": "coincide",
+      "ejemplo": "S204B"
+    },
+    {
+      "columna": "numSerieExpedicion",
+      "origen": "listado.deliveryNumber",
+      "endpoint": "p_expedicionesAza SELECT",
+      "estado": "coincide",
+      "ejemplo": "954634"
+    },
+    {
+      "columna": "bultos",
+      "origen": "listado.numContenedores",
+      "endpoint": "p_expedicionesAza SELECT",
+      "estado": "coincide",
+      "ejemplo": "4"
+    },
+    {
+      "columna": "Purchase_Order",
+      "origen": "cabecera.pedidoCliente",
+      "endpoint": "p_expCabeceraAza SELECT_ONE",
+      "estado": "coincide",
+      "ejemplo": "2239911",
+      "nota": "CONFIRMADO con la fila PL255408337746 (2239911 = pedidoCliente). Limite varchar(25)."
+    },
+    {
+      "columna": "fecharuta",
+      "origen": "listado.fechaRuta",
+      "endpoint": "p_expedicionesAza SELECT",
+      "estado": "coincide",
+      "ejemplo": "06/10/2026 13:55:46",
+      "conversion": "dd/MM/yyyy HH:mm:ss -> datetime",
+      "nota": "LUX no da milisegundos (la tabla tiene .257): se perderian."
+    },
+    {
+      "columna": "manipulados",
+      "origen": "datosExtra.observacionesAlmacen (o listado.txtPicking)",
+      "estado": "HIPOTESIS",
+      "nota": "NULL cuando LUX lo tiene vacio. Mejor candidato segun las filas de abril (texto que empieza igual); sin confirmar el texto completo. varchar(2000). Existe tambien p_manReferenciasDatosExtra (SELECT_INICIO por idParent de articulo) por si el texto viniera de ahi (devolvio 0 filas para el articulo probado)."
+    },
+    {
+      "columna": "peligrosidad",
+      "origen": "ADR de las referencias de las lineas del pedido (p_manReferenciasADR: campo adr = 'NO APLICA' | 'ADR' | 'LQ')",
+      "estado": "ORIGEN_ENCONTRADO",
+      "nota": "Regla indicada por el usuario (al menos una referencia con esa caracteristica) y confirmada estructuralmente: el dominio del campo adr de LUX es exactamente {NO APLICA, ADR, LQ}. En LUX hay 46 referencias LQ y 87 ADR. La referencia de la linea viene como '<idArticulo>@tlsi@<codigo>@tlsi@<descripcion>': el codigo es el 2o trozo. Requiere anadir p_manReferenciasADR (solo lectura) a la whitelist. Es mejor cargar la lista de referencias LQ/ADR (133) una vez y cachearla, que consultar cada referencia.",
+      "ejemplo": "LQ",
+      "endpoint": "p_manReferenciasADR (SELECT con adr='LQ' / adr='ADR', o SELECT_INICIO con propietario+referencia) + codigo de referencia de cada linea (p_expPedidoLineas)",
+      "regla": "Si AL MENOS UNA referencia del pedido tiene adr distinto de 'NO APLICA' -> ese valor ('LQ' o 'ADR'); si todas son 'NO APLICA' -> NULL. Prioridad si hay mezcla de ADR y LQ: por decidir (propuesta: ADR)."
+    },
+    {
+      "columna": "idplanigridantiguo",
+      "origen": null,
+      "estado": "NULL",
+      "nota": "Sin equivalente en LUX; NULL en los ejemplos."
+    },
+    {
+      "columna": "Palets",
+      "origen": "listado.numPalets (o listado.pallets)",
+      "endpoint": "p_expedicionesAza SELECT",
+      "estado": "coincide",
+      "ejemplo": "4"
+    }
+  ],
+  "esquemaTabla": {
+    "fuente": "Diseno de la tabla facilitado por el usuario (Checked = admite NULL, Unchecked = NOT NULL).",
+    "columnas": [
+      {
+        "columna": "id",
+        "tipo": "int",
+        "admiteNull": false,
+        "nota": "Probablemente IDENTITY: confirmar."
+      },
+      {
+        "columna": "idplanigrid",
+        "tipo": "int",
+        "admiteNull": true
+      },
+      {
+        "columna": "propietario",
+        "tipo": "varchar(100)",
+        "admiteNull": false
+      },
+      {
+        "columna": "pedido",
+        "tipo": "varchar(50)",
+        "admiteNull": false
+      },
+      {
+        "columna": "consignacion",
+        "tipo": "varchar(100)",
+        "admiteNull": true
+      },
+      {
+        "columna": "fechatransporte",
+        "tipo": "datetime",
+        "admiteNull": false
+      },
+      {
+        "columna": "servicelevel",
+        "tipo": "varchar(50)",
+        "admiteNull": false
+      },
+      {
+        "columna": "transportista",
+        "tipo": "varchar(50)",
+        "admiteNull": false
+      },
+      {
+        "columna": "bloqueo",
+        "tipo": "varchar(50)",
+        "admiteNull": true
+      },
+      {
+        "columna": "idExpPedidoCabecera",
+        "tipo": "int",
+        "admiteNull": false
+      },
+      {
+        "columna": "almacen",
+        "tipo": "varchar(50)",
+        "admiteNull": false
+      },
+      {
+        "columna": "procesado",
+        "tipo": "int",
+        "admiteNull": true
+      },
+      {
+        "columna": "comentariotransportista",
+        "tipo": "varchar(50)",
+        "admiteNull": true
+      },
+      {
+        "columna": "estado",
+        "tipo": "int",
+        "admiteNull": false
+      },
+      {
+        "columna": "actualizado",
+        "tipo": "int",
+        "admiteNull": true
+      },
+      {
+        "columna": "destino",
+        "tipo": "varchar(35)",
+        "admiteNull": true
+      },
+      {
+        "columna": "playa",
+        "tipo": "varchar(50)",
+        "admiteNull": true
+      },
+      {
+        "columna": "numSerieExpedicion",
+        "tipo": "varchar(50)",
+        "admiteNull": true
+      },
+      {
+        "columna": "bultos",
+        "tipo": "int",
+        "admiteNull": true
+      },
+      {
+        "columna": "Purchase_Order",
+        "tipo": "varchar(25)",
+        "admiteNull": true
+      },
+      {
+        "columna": "fecharuta",
+        "tipo": "datetime",
+        "admiteNull": true
+      },
+      {
+        "columna": "manipulados",
+        "tipo": "varchar(2000)",
+        "admiteNull": true
+      },
+      {
+        "columna": "peligrosidad",
+        "tipo": "varchar(50)",
+        "admiteNull": true
+      },
+      {
+        "columna": "idplanigridantiguo",
+        "tipo": "int",
+        "admiteNull": true
+      },
+      {
+        "columna": "Palets",
+        "tipo": "int",
+        "admiteNull": true
+      }
+    ],
+    "obligatorias_NOT_NULL": [
+      "id",
+      "propietario",
+      "pedido",
+      "fechatransporte",
+      "servicelevel",
+      "transportista",
+      "idExpPedidoCabecera",
+      "almacen",
+      "estado"
+    ],
+    "conclusion": "TODAS las columnas NOT NULL (salvo id, automatica) salen de LUX. idplanigrid es NULLABLE, por lo que un INSERT es posible sin ese dato: no bloquea. Las columnas sin origen en LUX (idplanigrid, procesado, actualizado, manipulados, peligrosidad, idplanigridantiguo) admiten NULL."
+  },
+  "validacionesNecesarias": {
+    "baseDelAnalisis": "1.284 JSON de expedicion del watcher (data/watcher-events).",
+    "conversionesDeTipo": [
+      "estado, idExpPedidoCabecera, bultos, Palets son int: convertir desde texto; si viene vacio -> NULL (solo en las nullable: bultos, Palets).",
+      "fechatransporte y fecharuta son datetime: LUX da 'dd/MM/yyyy HH:mm:ss' (sin milisegundos); fecharuta vacia -> NULL (esta vacia en 1.257 de 1.284 JSON: el pedido aun no tiene ruta).",
+      "Palets: usar listado.numPalets; listado.pallets viene VACIO en el 100% de los JSON."
+    ],
+    "longitudes": [
+      {
+        "columna": "destino",
+        "limite": 35,
+        "maximoVisto": 35,
+        "origen": "listado.poblacion",
+        "riesgo": "al limite exacto (p.ej. 'Artia-Jauregi (Poligono Industrial)'): truncar a 35 por seguridad."
+      },
+      {
+        "columna": "Purchase_Order",
+        "limite": 25,
+        "maximoVisto": 22,
+        "origen": "cabecera.pedidoCliente",
+        "riesgo": "poco margen: truncar a 25."
+      },
+      {
+        "columna": "transportista",
+        "limite": 50,
+        "maximoVisto": 44,
+        "origen": "cabecera.transportista",
+        "riesgo": "poco margen: truncar a 50."
+      },
+      {
+        "columna": "comentariotransportista",
+        "limite": 50,
+        "maximoVisto": 250,
+        "origen": "cabecera.observaciones (hipotesis)",
+        "riesgo": "423 de 1.284 JSON superan 50 caracteres: si el origen fuera 'observaciones' habria que truncar y se perderia texto. En la fila real esta VACIA y en la de abril valia 'SUS MEDIOS' (= serviceLevel): origen sin confirmar."
+      },
+      {
+        "columna": "pedido",
+        "limite": 50,
+        "maximoVisto": 31,
+        "riesgo": "ok"
+      },
+      {
+        "columna": "propietario",
+        "limite": 100,
+        "maximoVisto": 14,
+        "riesgo": "ok"
+      },
+      {
+        "columna": "consignacion",
+        "limite": 100,
+        "maximoVisto": 50,
+        "origen": "listado.ruta",
+        "riesgo": "ok"
+      },
+      {
+        "columna": "servicelevel",
+        "limite": 50,
+        "maximoVisto": 22,
+        "riesgo": "ok"
+      },
+      {
+        "columna": "numSerieExpedicion",
+        "limite": 50,
+        "maximoVisto": 6,
+        "riesgo": "ok"
+      },
+      {
+        "columna": "playa",
+        "limite": 50,
+        "maximoVisto": 10,
+        "riesgo": "ok"
+      }
+    ],
+    "registrosIncompletos": {
+      "hallazgo": "Algunos JSON del watcher no traen datos suficientes para las columnas NOT NULL.",
+      "casos": [
+        "21 de 1.284 sin fila de listado (propietario, pedido, transportista y estado vacios).",
+        "11 sin cabecera (sin fechaTransporte; tampoco listado.fecha).",
+        "10 sin idPedido.",
+        "49 con serviceLevel vacio (NOT NULL: guardar cadena vacia o definir un valor por defecto)."
+      ],
+      "regla": "No hacer INSERT/UPDATE si faltan pedido, propietario, transportista, estado, idExpPedidoCabecera o fechatransporte: esperar a un evento posterior completo (el watcher ya reintenta/re-consulta). servicelevel vacio -> ''."
+    },
+    "valoresPorDefectoParaNOT_NULL": {
+      "servicelevel": "'' si LUX no lo da",
+      "fechatransporte": "sin valor por defecto razonable: omitir el registro hasta tenerla (alternativa: listado.fecha si existe)"
+    }
+  },
+  "resumen": {
+    "columnasTotales": 25,
+    "coincidenConLux": 16,
+    "automaticas": [
+      "id"
+    ],
+    "noSalenDeLux": [
+      "idplanigrid"
+    ],
+    "flagsDeControl": [
+      "procesado",
+      "actualizado"
+    ],
+    "sinOrigenConfirmado": [
+      "comentariotransportista"
+    ],
+    "siempreNull": [
+      "idplanigridantiguo"
+    ],
+    "hipotesis": [
+      "manipulados"
+    ],
+    "origenEncontrado": [
+      "peligrosidad"
+    ]
+  },
+  "datosDelPedido43434_enLux": {
+    "cabecera_p_expCabeceraAza_SELECT_ONE": {
+      "estado": "6",
+      "bloqueo": "",
+      "provincia": "",
+      "prioridad": "10",
+      "idDireccion": "1685",
+      "pedido": "CREN00204978",
+      "cmbTipo": "0",
+      "fechaTransporte": "06/10/2026 10:00:00",
+      "transportista": "ENRIQUE REDOLAR",
+      "contacto": "PRUEBA",
+      "propietario": "COSMEWAX",
+      "direccion": "Genérico",
+      "tipoPedido": "NORMAL",
+      "cp": "00000",
+      "codCliente": "GENERICO",
+      "pais": "ESPAÑA",
+      "clienteNombre": "GENERICO",
+      "pedidoCliente": "",
+      "observaciones": "",
+      "poblacion": "Valencia"
+    },
+    "listado_p_expedicionesAza_SELECT": {
+      "id": "43434",
+      "estado": "ENVIADO",
+      "tipo": "NORMAL",
+      "generarDeca": "DECA AZA",
+      "nivelServicio": "NORMAL",
+      "fechaCerrado": "06/10/2026 09:52:54",
+      "fechaRuta": "06/10/2026 13:55:46",
+      "deliveryNumber": "954634",
+      "transportista": "ENRIQUE REDOLAR",
+      "volumen": "27600.0",
+      "muelle": "S204B",
+      "numPalets": "4",
+      "serviceLevel": "NORMAL",
+      "fecha": "06/10/2026 10:00:00",
+      "expedicion": "WH0091858",
+      "unidades": "27600",
+      "poblacion": "Valencia",
+      "ruta": "RT00013792_2026_ENRIQUE REDOLAR",
+      "numContenedores": "4",
+      "lineas": "2 / 2",
+      "propietario": "COSMEWAX",
+      "facturarTransporte": "SI",
+      "fechaCreacion": "06/10/2026 09:15:07"
+    },
+    "datosExtra_p_expCabeceraAza_SELECT_INICIO": {
+      "generarDeca": "DECA AZA",
+      "expedicion": "WH0091858",
+      "observacionesAlbaran": "",
+      "fechaEntrega": "",
+      "facturarTransporte": "SI",
+      "observacionesAlmacen": "",
+      "serviceLevel": "NORMAL",
+      "carga": ""
+    },
+    "ruta_p_expRutas_SELECT_numeroRuta_estadoENVIADA": {
+      "id": "14903",
+      "numeroRuta": "RT00013792_2026_ENRIQUE REDOLAR",
+      "estado": "ENVIADA",
+      "conductorNombre": "Enrique",
+      "conductorApellidos": "Redolar",
+      "conductorDni": "52652839C",
+      "conductorTelefono": "+34634998610",
+      "matriculaTractora": "2584 FZK",
+      "matriculaRemolque": "R 0917 BBL",
+      "transportista": "ENRIQUE REDOLAR"
+    },
+    "contadores": {
+      "lineas": 2,
+      "contenedores": 4
+    }
+  },
+  "busquedaDeCoincidencias": {
+    "valoresBuscados": [
+      "192070",
+      "309369",
+      "NINGUNO",
+      "954634",
+      "S204B",
+      "43434",
+      "CREN00204978",
+      "RT00013792"
+    ],
+    "procedimientosProbados": [
+      "p_expCabeceraAza",
+      "p_expPedidoLineas",
+      "p_expedicionesAza",
+      "p_expPedidoContenedores",
+      "p_recCabeceraAza",
+      "p_expRutas",
+      "p_expRutasDeca",
+      "p_expRutasDetalle"
+    ],
+    "accionesProbadas": [
+      "SELECT",
+      "SELECT_ONE",
+      "SELECT_INICIO",
+      "SELECT_ENVIOS",
+      "SELECT_DESCARGAS",
+      "SELECT_DETALLE",
+      "SELECT_HISTORICO",
+      "SELECT_LOG",
+      "SELECT_PLANIGRID",
+      "SELECT_TABS"
+    ],
+    "formasDeBusqueda": [
+      "idParent=43434",
+      "idPedido=43434",
+      "id=43434",
+      "pedido=CREN00204978",
+      "id de la ruta (14903)"
+    ],
+    "resultado": "192070 y 309369 no aparecen en ninguna respuesta de LUX ni en los JSON del watcher. El resto de valores coinciden con los campos indicados en mapeoColumnas.",
+    "advertencia": "En p_expedicionesAza, p_recepcionesAza y p_expRutas el parametro 'id' se ignora (devuelven el listado completo): no usarlo como filtro. p_expRutas oculta las rutas ENVIADA salvo que se pida estado=ENVIADA."
+  },
+  "propuestaUpsert": {
+    "claveDeBusqueda": [
+      "pedido",
+      "propietario",
+      "almacen"
+    ],
+    "alternativa": [
+      "idExpPedidoCabecera + almacen (solo valida para filas nuevas; las antiguas usan otros ids)"
+    ],
+    "siExiste": "UPDATE de las columnas que vienen de LUX (propietario, consignacion, fechatransporte, servicelevel, transportista, estado, destino, playa, numSerieExpedicion, bultos, Purchase_Order, fecharuta, Palets, manipulados) y, segun se decida, bloqueo e idExpPedidoCabecera. No tocar idplanigrid, idplanigridantiguo, peligrosidad, comentariotransportista, ni consignacion si ya tiene el codigo del planificador.",
+    "siNoExiste": "INSERT con las mismas columnas + flags de control (procesado, actualizado) por decidir; idplanigrid segun la via que se defina.",
+    "dondeEnchufarlo": "WatcherSink.onExpedicionActualizada (src/watcher/watcherSink.ts): cada vez que el watcher re-consulta un pedido. El JSON del pedido ya trae cabecera, listado, datosExtra, datosRuta, lineas y contenedores.",
+    "preguntasAbiertas": [
+      "De donde sale idplanigrid en un INSERT.",
+      "Valor y semantica de procesado y actualizado (el UPDATE debe reiniciar procesado?).",
+      "Origen real de comentariotransportista y Purchase_Order (necesita un pedido con observaciones).",
+      "Que se guarda en consignacion cuando la ruta es 'NO ASIGNADA'.",
+      "Si bloqueo puede valer 'NINGUNO' segun el estado.",
+      "Que hacer con los milisegundos de fecharuta.",
+      "Pedidos con estados distintos de ENVIADO: confirmar estado numerico y flags.",
+      "La fila de abril difiere en propietario (codigo), consignacion, bloqueo y comentariotransportista: confirmar si es una version antigua del proceso."
+    ]
+  },
+  "ejemplosAdicionales_manipulados_peligrosidad": {
+    "fuente": "Dos filas de abril facilitadas por el usuario; los pedidos SI existen en LUX (ENVIADO) y se han comparado campo a campo con p_expCabeceraAza, p_expedicionesAza, lineas, contenedores, ruta y catalogos.",
+    "conManipulados": {
+      "filaTabla": {
+        "id": 271603,
+        "idplanigrid": 171666,
+        "propietario": "00180107",
+        "pedido": "PL255408337746",
+        "consignacion": "26042717H8",
+        "fechatransporte": "2026-04-27 17:00:00.000",
+        "servicelevel": "NORMAL",
+        "transportista": "COMP LOPEZ HORTELANO",
+        "bloqueo": "NINGUNO",
+        "idExpPedidoCabecera": 1005090,
+        "almacen": "SAGUNTO",
+        "procesado": 1,
+        "comentariotransportista": "COMPLETO",
+        "estado": -3,
+        "actualizado": 1,
+        "destino": "QUER",
+        "playa": null,
+        "numSerieExpedicion": null,
+        "bultos": null,
+        "Purchase_Order": "2239911",
+        "fecharuta": null,
+        "manipulados": "MONOREFERENCIA, PALET BUENO y CARGAMOS NOSOTROS, PALET BUENO y CARGAMOS NOSOTROS",
+        "peligrosidad": null,
+        "idplanigridantiguo": null,
+        "Palets": null
+      },
+      "luxHoy": {
+        "idPedido": "5158",
+        "estado": "ENVIADO",
+        "ruta": "RT00001821_2026_LOPEZ HORTELANO",
+        "propietario": "00180107",
+        "transportista": "LOPEZ HORTELANO",
+        "serviceLevel": "NORMAL",
+        "fechaTransporte": "27/04/2026 00:00:00",
+        "poblacion": "QUER",
+        "pedidoCliente": "2239911",
+        "txtPicking": "MONOREFERENCIA, PALLET EPAL HOMOLOGADO",
+        "observacionesAlmacen": "MONOREFERENCIA, PALLET EPAL HOMOLOGADO",
+        "observaciones": "HORA DE DESCARGA DE 6 A 11 H",
+        "deliveryNumber": "918667",
+        "muelle": "S119",
+        "numContenedores": "7",
+        "numPalets": "7",
+        "fechaRuta": "28/04/2026 16:36:37",
+        "cabecera.estado": "6"
+      },
+      "coincidencias": [
+        "propietario = 00180107 (es el propio nombre del propietario en LUX; existe en select_propietarios)",
+        "pedido",
+        "almacen",
+        "destino = poblacion (QUER)",
+        "Purchase_Order = cabecera.pedidoCliente (2239911) -> CONFIRMADO",
+        "manipulados ~ datosExtra.observacionesAlmacen / listado.txtPicking: empieza igual ('MONOREFERENCIA, PALLET...'); el resto del texto difiere y en la tabla aparece repetido dos veces"
+      ],
+      "noCoinciden": [
+        "transportista: 'COMP LOPEZ HORTELANO' vs 'LOPEZ HORTELANO' en LUX",
+        "fechatransporte: 17:00 en la tabla vs 00:00 en LUX",
+        "estado -3 vs 6",
+        "playa/numSerie/bultos/Palets/fecharuta NULL en la tabla vs valores en LUX (la fila es una foto anterior)",
+        "consignacion '26042717H8' no existe en LUX",
+        "comentariotransportista 'COMPLETO' no existe en LUX",
+        "idExpPedidoCabecera 1005090 vs id LUX 5158"
+      ]
+    },
+    "conPeligrosidad": {
+      "filaTabla": {
+        "id": 271619,
+        "idplanigrid": 171586,
+        "propietario": "CAMELIA",
+        "pedido": "180273",
+        "consignacion": "MRWCAM2404",
+        "fechatransporte": "2026-04-24 18:00:00.000",
+        "servicelevel": "U19E (0205)",
+        "transportista": "MRW SAGUNTO",
+        "bloqueo": "NINGUNO",
+        "idExpPedidoCabecera": 1005053,
+        "almacen": "SAGUNTO",
+        "procesado": 1,
+        "comentariotransportista": "PAQUETERIA",
+        "estado": 6,
+        "actualizado": 1,
+        "destino": "Marinha Grande",
+        "playa": null,
+        "numSerieExpedicion": "918280",
+        "bultos": 1,
+        "Purchase_Order": "",
+        "fecharuta": "2026-04-24 19:11:07.470",
+        "manipulados": null,
+        "peligrosidad": "LQ",
+        "idplanigridantiguo": null,
+        "Palets": null
+      },
+      "luxHoy": {
+        "idPedido": "5035",
+        "estado": "ENVIADO",
+        "ruta": "RT00002884_2026_FEDEX",
+        "propietario": "CAMELIA",
+        "transportista": "FEDEX",
+        "serviceLevel": "fedex-regional-economy",
+        "fechaTransporte": "08/05/2026 14:00:00",
+        "poblacion": "Marinha Grande",
+        "deliveryNumber": "918530",
+        "muelle": "",
+        "numContenedores": "2",
+        "numPalets": "0",
+        "fechaRuta": "08/05/2026 16:15:55",
+        "cabecera.estado": "6"
+      },
+      "coincidencias": [
+        "propietario = CAMELIA",
+        "pedido = 180273",
+        "almacen",
+        "destino = poblacion (Marinha Grande)",
+        "estado = 6",
+        "Purchase_Order vacio <-> pedidoCliente vacio",
+        "manipulados NULL <-> observacionesAlmacen vacia (coherente con la hipotesis)"
+      ],
+      "noCoinciden": [
+        "peligrosidad 'LQ': NO aparece en ningun campo de cabecera, listado, datos extra, ruta, lineas, contenedores ni DECA (busqueda de 'LQ' sin resultados)",
+        "servicelevel 'U19E (0205)' (existe en el catalogo de service levels) vs 'fedex-regional-economy' hoy",
+        "transportista 'MRW SAGUNTO' vs 'FEDEX' hoy",
+        "fechatransporte 18:00 del 24/04 vs 14:00 del 08/05",
+        "numSerieExpedicion 918280 vs deliveryNumber 918530",
+        "bultos 1 vs numContenedores 2",
+        "fecharuta 24/04 19:11:07 vs 08/05 16:15:55",
+        "consignacion 'MRWCAM2404' no existe en LUX",
+        "comentariotransportista 'PAQUETERIA' no existe en LUX",
+        "idExpPedidoCabecera 1005053 vs id LUX 5035"
+      ]
+    },
+    "conclusiones": [
+      "manipulados: mejor candidato = datosExtra.observacionesAlmacen (igual a listado.txtPicking). Evidencia: texto que empieza igual, y NULL cuando LUX lo tiene vacio (filas de abril y la de octubre). Sin confirmar: el texto de la tabla es mas largo y repetido (posible concatenacion de campos o version anterior). Cabe en varchar(2000).",
+      "peligrosidad: NO se obtiene con los endpoints actuales. 'LQ' (cantidades limitadas ADR) no esta en el pedido; lo mas probable es que venga de la ficha del articulo/referencia o de otra tabla del planificador. Dejar NULL (admite NULL) o buscar el origen fuera de LUX.",
+      "Purchase_Order = cabecera.pedidoCliente: CONFIRMADO con la fila 1 (2239911).",
+      "propietario: no hay problema de codigo; LUX usa el mismo valor (p.ej. '00180107' es el nombre del propietario en LUX).",
+      "idExpPedidoCabecera: en las filas de abril NO coincide con el id de LUX (1005090 vs 5158; 1005053 vs 5035; la diferencia no es constante) y en la de octubre SI (43434). Los registros antiguos usan otro espacio de ids -> la clave de busqueda del upsert NO debe ser idExpPedidoCabecera sino pedido + propietario + almacen.",
+      "Las filas de abril son 'fotos' del momento de planificar (playa, bultos, Palets, numSerie y fecharuta vacios o distintos de LUX hoy): justifican que el UPDATE refresque estas columnas desde LUX.",
+      "estado: aparece -3 en una fila de abril (no esta en la tabla de estados de LUX conocida); revisar antes de pisar ese valor.",
+      "bloqueo: en abril 'NINGUNO'; en octubre vacio (LUX). Decidir cual escribir (propuesta: tal cual LUX y no tocar si ya tiene valor).",
+      "comentariotransportista (COMPLETO / PAQUETERIA / SUS MEDIOS / vacio): parece una categoria del transportista (COMP... -> COMPLETO, MRW... -> PAQUETERIA, SUSMEDIOS -> SUS MEDIOS); no existe en LUX (el catalogo select_transportistas devuelve 0 filas). Probablemente una tabla de transportistas propia del planificador."
+    ]
+  },
+  "peligrosidad_hallazgo": {
+    "reglaDelUsuario": "peligrosidad se informa cuando al menos una referencia del pedido tiene esa caracteristica.",
+    "dondeEstaElDato": {
+      "procedimiento": "p_manReferenciasADR",
+      "campos": [
+        "descripcion",
+        "propietario",
+        "id",
+        "referencia",
+        "adr"
+      ],
+      "valoresDeAdr": [
+        "NO APLICA",
+        "ADR",
+        "LQ"
+      ],
+      "totales": {
+        "LQ": 46,
+        "ADR": 87
+      },
+      "comoConsultarlo": [
+        "SELECT con {adr:'LQ'} y {adr:'ADR'} -> lista completa de referencias (46 y 87 filas)",
+        "SELECT_INICIO con {propietario, referencia} -> la fila de esa referencia (1 fila)",
+        "SELECT_INICIO sin filtro -> solo las primeras 50 filas (no sirve para listar todo)"
+      ]
+    },
+    "otrosProcedimientosDeArticulos": {
+      "p_manReferencias": "maestro de articulos: SELECT con {propietario, referencia} devuelve 1 fila (id, categoria, tipo, embalaje, observaciones...). NO trae el ADR.",
+      "p_manEmbalajes": "tiene un campo peligrosidad con valores '', X, Y, Z (propio del embalaje, NO es el LQ/ADR de la tabla)."
+    },
+    "comoSeCruzaConElPedido": "p_expPedidoLineas.referencia = '<idArticulo>@tlsi@<codigoReferencia>@tlsi@<descripcion>' -> codigo = 2o trozo; propietario = el del pedido.",
+    "comprobaciones": [
+      "Pedido 5158 (fila con manipulados, peligrosidad NULL): sus 2 referencias son 'NO APLICA' -> NULL. COHERENTE.",
+      "Fila de octubre (pedido 43434) con peligrosidad NULL: coherente si sus referencias son NO APLICA (no comprobado).",
+      "Pedido 5035 (fila con peligrosidad 'LQ'): sus 4 referencias figuran HOY como 'NO APLICA' (3770007896025, 3760297542849, 3770004692286, 3760297546854). NO se puede confirmar: o el ADR de esos articulos se cambio despues de abril o el LQ venia de otra fuente. Pendiente de contrastar con un pedido que contenga hoy una referencia LQ/ADR."
+    ],
+    "pendiente": [
+      "Prioridad cuando el pedido mezcla ADR y LQ.",
+      "Verificar con un pedido actual que contenga una referencia LQ o ADR y su fila en la tabla.",
+      "Anadir p_manReferenciasADR a la whitelist de LUX (solo SELECT/SELECT_INICIO)."
+    ]
+  }
+}
