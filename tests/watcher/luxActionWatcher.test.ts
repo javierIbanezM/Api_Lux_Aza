@@ -44,6 +44,8 @@ describe('watcher/LuxActionWatcher', () => {
     debounceMs: 30,
     maxWaitMs: 500,
     retryDelayMs: 60_000,
+    decaRecheckMs: 60,
+    decaRecheckMax: 20,
     stateDir: '',
     rutasDecaDir: '',
     revisarFicherosDeca: 3,
@@ -840,6 +842,48 @@ describe('watcher/LuxActionWatcher', () => {
     }, 8000);
   };
 
+  it('un DECA a medias (PENDIENTE ENVIO, sin shipmentId) se re-consulta hasta que tiene el envio, y entonces descarga y se da por procesado', async () => {
+    let consultasDeca = 0;
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expedicionesAza') {
+          return { status: 200, body: [{ id: '42', pedido: 'P1', estado: 'ASIGNADO', ruta: RUTA_EXACTA }] };
+        }
+        if (proc === 'p_expRutasDeca' && body.accion === 'SELECT') {
+          consultasDeca += 1;
+          return {
+            status: 200,
+            body: [consultasDeca < 3
+              ? { shipmentReference: `${RUTA_EXACTA}-AZA`, estado: 'PENDIENTE ENVIO', shipmentId: '' }
+              : { shipmentReference: `${RUTA_EXACTA}-AZA`, estado: 'ENVIADO', shipmentId: 'SHIP-9' }],
+          };
+        }
+        return { status: 200, body: [] };
+      },
+    });
+    const descargarDocumentos = vi.fn(async () => []);
+    const onRutaDecaActualizada = vi.fn();
+    const appConfig = buildTestConfig({ luxBaseUrl: baseUrl });
+    const luxClient = new LuxClient(appConfig, new AuthManager(appConfig, createLogger('error')), createLogger('error'));
+    const exp = new ExpedicionesService(luxClient);
+    watcher = new LuxActionWatcher(
+      config, luxClient, exp, new RecepcionesService(luxClient), createLogger('debug'),
+      { onRutaDecaActualizada }, new RutasService(luxClient, exp), { descargarDocumentos },
+    );
+    watcher.start();
+    await waitUntil(() => existsSync(join(config.stateDir, 'lux.state.json')) && existsSync(join(config.stateDir, 'lux-mobile.state.json')));
+
+    appendFileSync(luxLogPath, lineaRuta('MMartosL'));
+
+    await waitUntil(() => onRutaDecaActualizada.mock.calls.length >= 3, 8000);
+    expect(onRutaDecaActualizada.mock.calls[0]?.[0].deca[0].shipmentId).toBe('');
+    expect(onRutaDecaActualizada.mock.calls[2]?.[0].deca[0].shipmentId).toBe('SHIP-9');
+    expect(descargarDocumentos).toHaveBeenCalledWith('SHIP-9');
+    await esperarRegistro(1); // solo al completarse se anota como procesada
+    await new Promise((r) => setTimeout(r, 300));
+    expect(onRutaDecaActualizada.mock.calls.length).toBe(3); // completo: no se vuelve a consultar
+  });
+
   describe('revision de arranque: lee lux.log.1 y lux.log.0 y procesa las consultas de ruta ya ocurridas', () => {
     const linea = (hora: string, ruta: string, usuario: string): string =>
       `05-oct-2026 ${hora} INFO:   [] exec p_expedicionesAza @extraMostrar='',@estado='',@tipo='',@generarDeca='',@fechaCerrado_FIN='',@ruta='%${ruta}%',@ALMACEN='SAGUNTO',@ACCION='SELECT',@USUARIO='${usuario}'\n`;
@@ -1062,7 +1106,10 @@ describe('watcher/LuxActionWatcher', () => {
           return { status: 200, body: [{ generarDeca: 'SI', carga: '' }] };
         }
         if (proc === 'p_expedicionesAza' && body.accion === 'SELECT') {
-          return { status: 200, body: [{ id: '11115', pedido: 'EXP0000074', estado: 'ASIGNADO' }] };
+          return { status: 200, body: [{ id: '11115', pedido: 'EXP0000074', estado: 'ASIGNADO', ruta: 'RT1_2026_X' }] };
+        }
+        if (proc === 'p_expRutas') {
+          return { status: 200, body: [{ numeroRuta: 'RT1_2026_X', conductorNombre: 'Sascha', conductorDni: '161616', conductorEmail: '' }] };
         }
         if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_ONE') {
           return { status: 200, body: [{ mensaje: 'OK', idAlbaran: '7838', albaran: 'REC0000068' }] };
@@ -1088,6 +1135,7 @@ describe('watcher/LuxActionWatcher', () => {
 
     await waitUntil(() => onExpedicionActualizada.mock.calls.length > 0 && onAlbaranActualizado.mock.calls.length > 0, 8000);
     expect(onExpedicionActualizada.mock.calls[0]?.[0].datosExtra).toEqual({ generarDeca: 'SI', carga: '' });
+    expect(onExpedicionActualizada.mock.calls[0]?.[0].datosRuta).toMatchObject({ conductorNombre: 'Sascha', conductorDni: '161616', conductorEmail: '' });
     expect(onAlbaranActualizado.mock.calls[0]?.[0].datosExtra).toEqual({ matricula: '1234ABC', telefono: '' });
   });
 

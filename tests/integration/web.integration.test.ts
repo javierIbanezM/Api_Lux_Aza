@@ -120,6 +120,50 @@ describe('Integracion: interfaz web de almacen (/almacen/*)', () => {
     expect(sinSecure).not.toMatch(/;\s*Secure/i);
   });
 
+  it('el detalle web de una expedicion muestra los datos del conductor de su ruta (p_expRutas)', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: '77', pedido: 'EXP0077', propietario: 'AZA' }] };
+        }
+        if (proc === 'p_expedicionesAza') {
+          return { status: 200, body: [{ id: '77', pedido: 'EXP0077', ruta: 'RT9_2026_X' }] };
+        }
+        if (proc === 'p_expRutas') {
+          return { status: 200, body: [{ numeroRuta: 'RT9_2026_X', conductorNombre: 'Sascha', conductorDni: '161616', conductorEmail: '', 'action#edit': '0' }] };
+        }
+        if (proc === 'p_expRutasDeca') {
+          return body.accion === 'SELECT'
+            ? { status: 200, body: [{ shipmentReference: 'RT9_2026_X-AZA', estado: 'ENVIADO', shipmentId: 'SH-1', error: '' }] }
+            : { status: 200, body: '' as never };
+        }
+        if (proc === 'p_expPedidoContenedores') {
+          // La 2a fila trae un campo que la 1a no tiene: la columna debe aparecer igualmente.
+          return { status: 200, body: [{ id: '1', hu: 'HU-A' }, { id: '2', hu: 'HU-B', campoRaro: 'X' }] };
+        }
+        return { status: 200, body: [] };
+      },
+    });
+    const login = await httpRequest(appUrl, 'POST', '/almacen/login', {
+      body: 'username=almacen1&password=password-seria-123',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+    const cookie = cookieFromSetCookie(login.headers['set-cookie']);
+
+    const r = await httpRequest(appUrl, 'GET', '/almacen/expediciones/77', { headers: { Cookie: cookie } });
+
+    expect(r.status).toBe(200);
+    expect(r.text).toContain('Datos de la ruta (conductor)');
+    expect(r.text).toContain('conductorNombre');
+    expect(r.text).toContain('Sascha');
+    expect(r.text).toContain('conductorEmail'); // campo vacio: se muestra igualmente
+    expect(r.text).not.toContain('action#edit');
+    expect(r.text).toContain('DECA de la ruta (p_expRutasDeca) (1)');
+    expect(r.text).toContain('SH-1');
+    expect(r.text).toContain('Envios del DECA (SELECT_ENVIOS) (0)');
+    expect(r.text).toContain('<th>campoRaro</th>'); // todos los campos de los contenedores, vengan en la fila que vengan
+  });
+
   it('el detalle web de una recepcion muestra el listado y las HUs (con sus campos vacios), igual que el JSON del watcher', async () => {
     mock.updateOptions({
       onProc: (proc, body) => {

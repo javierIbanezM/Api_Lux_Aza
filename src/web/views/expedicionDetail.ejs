@@ -31,6 +31,24 @@
   </div>
 <% } %>
 
+<% if (typeof datosRuta === 'undefined' || !datosRuta) { %>
+  <div class="card">
+    <h3>Datos de la ruta (conductor)</h3>
+    <p>Sin ruta asignada, o LUX no devolvio datos de la ruta.</p>
+  </div>
+<% } else { %>
+  <div class="card">
+    <h3>Datos de la ruta (conductor)</h3>
+    <table>
+      <tbody>
+        <% Object.keys(datosRuta).filter(function(k) { return k.indexOf('action#') !== 0; }).forEach(function(key) { %>
+          <tr><th><%= key %></th><td><%= datosRuta[key] %></td></tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+<% } %>
+
 <% if (datosExtra && Object.keys(datosExtra).length > 0) { %>
   <div class="card">
     <h3>Datos extra</h3>
@@ -45,13 +63,22 @@
 <% } %>
 
 <%
-  // Flags internos de botones de la UI de Whales (no son datos): se excluyen de la tabla.
-  var lineaColumnas = lineas.length > 0
-    ? Object.keys(lineas[0]).filter(function(k) { return k.indexOf('action#') !== 0; })
-    : [];
+  // Columnas = union de las claves de TODAS las filas (una fila sin un campo no oculta la columna).
+  // Los flags internos de botones de la UI de Whales (action#...) no son datos y se excluyen.
+  function columnasDe(filas) {
+    var cols = [];
+    filas.forEach(function(f) { Object.keys(f).forEach(function(k) { if (k.indexOf('action#') !== 0 && cols.indexOf(k) === -1) { cols.push(k); } }); });
+    return cols;
+  }
+  var lineaColumnas = columnasDe(lineas);
+  var contenedorColumnas = columnasDe(contenedores);
+  var decaFilas = (typeof decaRuta !== 'undefined' && decaRuta) ? decaRuta.deca : [];
+  var envioFilas = (typeof decaRuta !== 'undefined' && decaRuta) ? decaRuta.envios : [];
+  var decaColumnas = columnasDe(decaFilas);
+  var envioColumnas = columnasDe(envioFilas);
 %>
 <div class="card">
-  <h3>Lineas</h3>
+  <h3>Lineas (<%= lineas.length %>)</h3>
   <div style="overflow-x:auto;">
   <table>
     <thead>
@@ -78,47 +105,79 @@
 </div>
 
 <div class="card">
-  <h3>Contenedores</h3>
+  <h3>Contenedores (<%= contenedores.length %>)</h3>
   <div style="overflow-x:auto;">
   <table>
     <thead>
       <tr>
-        <th>Id</th>
-        <th>Contenedor</th>
-        <th>HU</th>
-        <th>Pallet</th>
-        <th>Referencia</th>
-        <th>Cantidad</th>
-        <th>Lote</th>
-        <th>Fecha caducidad</th>
-        <th>Ubicacion</th>
-        <th>Observaciones</th>
-        <th>Largo</th>
-        <th>Ancho</th>
-        <th>Alto</th>
-        <th>Peso</th>
+        <% contenedorColumnas.forEach(function(key) { %>
+          <th><%= key %></th>
+        <% }); %>
       </tr>
     </thead>
     <tbody>
       <% if (contenedores.length === 0) { %>
-        <tr><td colspan="14">Sin contenedores.</td></tr>
+        <tr><td>Sin contenedores.</td></tr>
       <% } %>
       <% contenedores.forEach(function(c) { %>
         <tr>
-          <td><%= c.id %></td>
-          <td><%= c.contenedor %></td>
-          <td><%= c.hu %></td>
-          <td><%= c.pallet %></td>
-          <td><%= c.referencia %></td>
-          <td><%= c.cantidad %></td>
-          <td><%= c.lote %></td>
-          <td><%= c.fechaCaducidad %></td>
-          <td><%= c.ubicacion %></td>
-          <td><%= c.observaciones %></td>
-          <td><%= c.largoContenedor %></td>
-          <td><%= c.anchoContenedor %></td>
-          <td><%= c.altoContenedor %></td>
-          <td><%= c.pesoContenedor %></td>
+          <% contenedorColumnas.forEach(function(key) { %>
+            <td><%= c[key] %></td>
+          <% }); %>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card">
+  <h3>DECA de la ruta (p_expRutasDeca) (<%= decaFilas.length %>)</h3>
+  <div style="overflow-x:auto;">
+  <table>
+    <thead>
+      <tr>
+        <% decaColumnas.forEach(function(key) { %>
+          <th><%= key %></th>
+        <% }); %>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (decaFilas.length === 0) { %>
+        <tr><td>Sin DECA para la ruta.</td></tr>
+      <% } %>
+      <% decaFilas.forEach(function(d) { %>
+        <tr>
+          <% decaColumnas.forEach(function(key) { %>
+            <td><%= d[key] %></td>
+          <% }); %>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Envios del DECA (SELECT_ENVIOS) (<%= envioFilas.length %>)</h3>
+  <div style="overflow-x:auto;">
+  <table>
+    <thead>
+      <tr>
+        <% envioColumnas.forEach(function(key) { %>
+          <th><%= key %></th>
+        <% }); %>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (envioFilas.length === 0) { %>
+        <tr><td>Sin envios.</td></tr>
+      <% } %>
+      <% envioFilas.forEach(function(e) { %>
+        <tr>
+          <% envioColumnas.forEach(function(key) { %>
+            <td><%= e[key] %></td>
+          <% }); %>
         </tr>
       <% }); %>
     </tbody>

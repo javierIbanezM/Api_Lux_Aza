@@ -34,6 +34,8 @@ interface PendingRefresh {
   firstAt: number;
   /** Reintentos ya hechos por fallo transitorio (LUX/red/sink). */
   attempts: number;
+  /** Re-consultas hechas porque el DECA seguia incompleto (ver `decaIncompleto`). */
+  rechecks?: number;
 }
 
 /** Rutas/DECA que la revision de arranque deja en curso a la vez contra LUX. */
@@ -43,6 +45,11 @@ const MAX_RUTAS_EN_ARRANQUE = 3;
 const COMMIT_INTERVAL_MS = 5_000;
 /** Tope del retraso entre reintentos de un refresco fallido. */
 const MAX_RETRY_DELAY_MS = 5 * 60_000;
+
+/** DECA a medias: algun envio sin shipmentId (`PENDIENTE ENVIO`: el envio a Docuten no se ha creado). */
+function decaIncompleto(c: RutaDecaConsulta): boolean {
+  return c.deca.some((d) => (d.shipmentId ?? '').trim() === '');
+}
 
 /** Error de infraestructura que se resuelve esperando (LUX caido, red, token): el evento NO se
  *  da por perdido, se reintenta. Un error funcional/de datos no se reintenta (daria igual). */
@@ -614,6 +621,8 @@ export class LuxActionWatcher {
         }
         if (!sinkOk) {
           this.scheduleRetry(key, entry);
+        } else if (conDatos.some(decaIncompleto) && this.scheduleRecheck(key, entry)) {
+          // DECA a medias (envio PENDIENTE / sin shipmentId): se vuelve a consultar sin darlo por procesado.
         } else {
           // Ruta procesada hasta esta consulta: la revision de arranque no la repetira.
           this.rutasProcesadas?.marcar(key, target.eventoEn ?? Date.now());
@@ -634,6 +643,8 @@ export class LuxActionWatcher {
         const sinkOk = c ? await this.guardarDeca(c, `GENERAR_DECA id=${target.idRuta}`, target.almacen, target.terminal, motivosList) : true;
         if (!sinkOk) {
           this.scheduleRetry(key, entry);
+        } else if (c && decaIncompleto(c) && this.scheduleRecheck(key, entry)) {
+          // DECA a medias: se vuelve a consultar sin darlo por procesado.
         } else if (c) {
           // Solo se da por procesado si el DECA existia; si no, la revision de arranque lo reintenta.
           this.rutasProcesadas?.marcar(key, target.eventoEn ?? Date.now());
@@ -701,6 +712,34 @@ export class LuxActionWatcher {
       void this.refresh(key);
     }, delay);
     this.retries.set(key, entry);
+  }
+
+  /** El DECA se crea en dos fases: primero la fila `PENDIENTE ENVIO` (sin shipmentId) y 4-40 s despues
+   *  el envio en Docuten. Mientras este incompleto se re-consulta cada `decaRecheckMs` hasta `decaRecheckMax`
+   *  veces; la posicion del log no se confirma entretanto (esta en `retries`). Devuelve false si ya no
+   *  quedan re-consultas (la ruta no se marca procesada y la revision de arranque la repetira). */
+  private scheduleRecheck(key: string, entry: PendingRefresh): boolean {
+    const hechas = entry.rechecks ?? 0;
+    if (this.pending.has(key) || this.retries.has(key)) {
+      return true; // ya hay un refresco posterior en marcha
+    }
+    if (hechas >= this.config.decaRecheckMax) {
+      this.logger.warn('DECA sigue incompleto tras las re-consultas; se reintentara en el proximo arranque', {
+        operacion: 'watcher.decaIncompleto',
+        resultado: 'ERROR',
+        rechecks: hechas,
+      });
+      return false;
+    }
+    entry.rechecks = hechas + 1;
+    entry.timer = setTimeout(() => {
+      this.retries.delete(key);
+      entry.firstAt = Date.now();
+      this.pending.set(key, entry);
+      void this.refresh(key);
+    }, this.config.decaRecheckMs);
+    this.retries.set(key, entry);
+    return true;
   }
 
   /** Descarga los documentos del DECA y lo entrega al sink. Devuelve false si el sink fallo (se reintenta). */
@@ -836,6 +875,7 @@ export class LuxActionWatcher {
     let lineas: ExpedicionLinea[] = [];
     let contenedores: ExpedicionContenedor[] = [];
     let datosExtra: Record<string, string> = {};
+    const datosRuta = await this.fetchBestEffort(() => this.expedicionesService.obtenerDatosRuta(resumen?.ruta, almacen), 'datosRuta');
     if (idPedido) {
       if (!cabecera) {
         cabecera = await this.fetchBestEffort(() => this.expedicionesService.obtenerExpedicion(idPedido, almacen), 'cabecera');
@@ -860,6 +900,7 @@ export class LuxActionWatcher {
       cabecera,
       listado: resumen,
       datosExtra,
+      datosRuta,
       lineas,
       contenedores,
     };

@@ -108,6 +108,37 @@ deploy/instalar-arranque-pm2.ps1 y la parte del README sobre PM2. Llevar el comm
    - Las carpetas antiguas se renombran solas: al arrancar el watcher (migrarCarpetas) y, por ruta, al escribir.
    - src/watcher/carpetasDeca.ts (nuevo), jsonFileSink.ts, scripts/watchLuxLogs.ts; tests (261 en verde).
    - En el servidor la migracion ocurre en su proximo arranque (pm2 restart api-whales-watcher).
+   - Arreglo de carrera: la migracion se lanzaba a la vez que el watcher y, en Windows, una carpeta con
+     ficheros abiertos no se puede renombrar (el error se tragaba). Ahora la migracion se hace ANTES de
+     watcher.start(), cada carpeta va en su try/catch (aviso watcher.carpetasDeca.error) y sigue con las demas.
+   - En el servidor 145 las 68 carpetas existentes ya se renombraron a mano; codigo copiado y compilado alli.
+
+5i. RECONSULTA DEL DECA A MEDIAS  (SIN COMMIT)
+   - El DECA se crea en dos fases: fila PENDIENTE ENVIO (sin shipmentId) y 4-40 s despues el envio en Docuten.
+     Si al consultar queda algun envio sin shipmentId, el watcher vuelve a consultar cada 15 s (maximo 20 veces,
+     5 min), descarga los PDFs cuando aparece el shipmentId y SOLO entonces anota la ruta como procesada.
+     Si se agotan las re-consultas, avisa (watcher.decaIncompleto) y la revision de arranque lo reintenta.
+   - Variables opcionales: WATCHER_DECA_RECHECK_MS (15000) y WATCHER_DECA_RECHECK_MAX (20).
+   - luxActionWatcher.ts (scheduleRecheck, decaIncompleto), watcherConfig.ts; test nuevo (263 en verde).
+   - Las carpetas ya guardadas incompletas (RT00013415, RT00013618, RT00013689...) no se corrigen solas:
+     se actualizan al volver a consultarse la ruta.
+
+5j. DATOS DEL CONDUCTOR (RUTA) EN EL DETALLE DE EXPEDICIONES  (SIN COMMIT)
+   - p_expRutas (SELECT, numeroRuta exacto) devuelve el conductor: conductorNombre, conductorApellidos, conductorDni,
+     conductorTelefono, conductorEmail, conductorContacto, matriculaTractora, matriculaRemolque, transportista, estado...
+   - Ahora el detalle de expedicion (API /api/expediciones/:id, pantalla web y JSON del watcher) incluye `datosRuta`
+     (la ruta sale de la fila del listado). p_expRutas se anade a la whitelist (solo lectura). Best effort: si falla
+     la lectura de la ruta no se pierde el resto del detalle.
+   - Web: tarjeta 'Datos de la ruta (conductor)' en expedicionDetail.ejs. Tests: 266 en verde.
+   - Requiere reiniciar API y watcher: pm2 restart all
+
+5k. DETALLE WEB/API: TODOS LOS CAMPOS DE TODOS LOS ENDPOINTS  (SIN COMMIT)
+   - Detalle de expedicion: columnas de Lineas y Contenedores = union de las claves de TODAS las filas
+     (antes: las de la 1a fila / 14 columnas fijas), con contador; tarjetas nuevas 'DECA de la ruta'
+     (p_expRutasDeca SELECT) y 'Envios del DECA' (SELECT_ENVIOS); 'Datos de la ruta' avisa si no hay datos.
+   - Detalle de recepcion: Lineas y HUs con la union de columnas. Campos vacios siempre visibles.
+   - p_expRutas oculta las rutas ENVIADA salvo estado=ENVIADA: se consulta primero sin estado y luego con ENVIADA.
+   - El listado /almacen/ NO cambia. Reiniciar API: pm2 restart all. Tests: 267 en verde.
 
 6. DOCS Y OTROS: README.md, informes/mejoras-pendientes.txt, .gitignore (bruno/). La coleccion de
    Bruno (bruno/docuten/) NO se versiona: lleva la clave.

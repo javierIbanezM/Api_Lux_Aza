@@ -32,6 +32,11 @@ export interface ExpedicionDetalle {
   /** Fila completa del visor (p_expedicionesAza): columnas que no trae p_expCabeceraAza
    *  (transportista, ruta, muelle, prioridad, etc.), ver docs/lux-api-analysis.md §6.3. */
   resumenListado: ExpedicionListItem | undefined;
+  /** Datos de la RUTA asignada (p_expRutas): conductor (nombre, apellidos, DNI, telefono, email),
+   *  matriculas, transportista, estado... `undefined` si el pedido no tiene ruta o no se encontro. */
+  datosRuta: Record<string, string> | undefined;
+  /** DECA de la ruta (p_expRutasDeca: SELECT y SELECT_ENVIOS). `undefined` si no hay ruta o no se pudo leer. */
+  decaRuta: { deca: Array<Record<string, string>>; envios: Array<Record<string, string>> } | undefined;
 }
 
 export interface CrearExpedicionResult {
@@ -166,7 +171,56 @@ export class ExpedicionesService {
       this.obtenerContenedoresExpedicion(idPedido, almacen),
     ]);
     const resumenListado = await this.obtenerResumenListadoExpedicion(cabecera.pedido, almacen);
-    return { cabecera, datosExtra, lineas, contenedores, resumenListado };
+    // Best effort: un fallo al leer la ruta no debe impedir ver el resto del detalle.
+    const [datosRuta, decaRuta] = await Promise.all([
+      this.obtenerDatosRuta(resumenListado?.ruta, almacen).catch(() => undefined),
+      this.obtenerDecaDeRuta(resumenListado?.ruta, almacen).catch(() => undefined),
+    ]);
+    return { cabecera, datosExtra, lineas, contenedores, resumenListado, datosRuta, decaRuta };
+  }
+
+  /** DECA (p_expRutasDeca SELECT) y envios/eventos (SELECT_ENVIOS) de la ruta, por `numeroRuta` exacto.
+   *  LUX devuelve cuerpo vacio ("") si no hay filas. Sin ruta (vacia o "NO ASIGNADA") no llama a LUX. */
+  async obtenerDecaDeRuta(numeroRuta: string | undefined, almacen?: string): Promise<ExpedicionDetalle['decaRuta']> {
+    const ruta = (numeroRuta ?? '').trim();
+    if (ruta === '' || ruta.toUpperCase() === 'NO ASIGNADA') {
+      return undefined;
+    }
+    const filas = async (accion: string): Promise<Array<Record<string, string>>> => {
+      const rows: unknown = await this.luxClient.callProc('p_expRutasDeca', accion, { numeroRuta: ruta }, {
+        operacion: 'expediciones.obtenerDecaDeRuta',
+        almacen,
+      });
+      return Array.isArray(rows) ? (rows as Array<Record<string, string>>) : [];
+    };
+    const [deca, envios] = await Promise.all([filas('SELECT'), filas('SELECT_ENVIOS')]);
+    return { deca, envios };
+  }
+
+  /**
+   * Fila de la ruta (p_expRutas, accion=SELECT) por `numeroRuta` EXACTO: incluye los datos del
+   * conductor y las matriculas (conductorNombre, conductorApellidos, conductorDni, conductorTelefono,
+   * conductorEmail, matriculaTractora, matriculaRemolque, transportista, estado...). Sin ruta
+   * (vacia o "NO ASIGNADA") no llama a LUX. LUX devuelve cuerpo vacio ("") si no hay filas.
+   */
+  async obtenerDatosRuta(numeroRuta: string | undefined, almacen?: string): Promise<Record<string, string> | undefined> {
+    const ruta = (numeroRuta ?? '').trim();
+    if (ruta === '' || ruta.toUpperCase() === 'NO ASIGNADA') {
+      return undefined;
+    }
+    // Como el listado de expediciones, p_expRutas OCULTA por defecto las rutas ya enviadas: hay que
+    // pedirlas con estado='ENVIADA'. Primero sin estado (lo habitual) y, si no hay fila, enviadas.
+    for (const extra of [{}, { estado: 'ENVIADA' }] as Array<Record<string, string>>) {
+      const rows: unknown = await this.luxClient.callProc('p_expRutas', 'SELECT', { numeroRuta: ruta, ...extra }, {
+        operacion: 'expediciones.obtenerDatosRuta',
+        almacen,
+      });
+      const fila = Array.isArray(rows) ? (rows[0] as Record<string, string> | undefined) : undefined;
+      if (fila) {
+        return fila;
+      }
+    }
+    return undefined;
   }
 
   async obtenerDatosExtraExpedicion(idPedido: string, almacen?: string): Promise<Record<string, string>> {

@@ -25,6 +25,62 @@ describe('ExpedicionesService', () => {
     await mock.close();
   });
 
+  it('obtenerDetalle incluye los datos de la ruta (conductor, DNI, telefono, matriculas) leidos con numeroRuta exacto', async () => {
+    const llamadas: string[] = [];
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        llamadas.push(`${proc}:${body.accion}`);
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: '5', pedido: 'EXP5' }] };
+        }
+        if (proc === 'p_expedicionesAza') {
+          return { status: 200, body: [{ id: '5', pedido: 'EXP5', ruta: 'RT00013795_2026_SUSMEDIOS' }] };
+        }
+        if (proc === 'p_expRutas') {
+          expect(body.accion).toBe('SELECT');
+          expect(body.numeroRuta).toBe('RT00013795_2026_SUSMEDIOS');
+          return { status: 200, body: [{ numeroRuta: 'RT00013795_2026_SUSMEDIOS', conductorNombre: 'Sascha', conductorDni: '161616', conductorTelefono: '+31625575601', conductorEmail: '', matriculaTractora: 'Bd086b' }] };
+        }
+        return { status: 200, body: [] };
+      },
+    });
+
+    const d = await service.obtenerDetalle('5', 'SAGUNTO');
+
+    expect(d.datosRuta).toMatchObject({ conductorNombre: 'Sascha', conductorDni: '161616', conductorEmail: '', matriculaTractora: 'Bd086b' });
+    expect(llamadas).toContain('p_expRutas:SELECT');
+  });
+
+  it('obtenerDatosRuta encuentra las rutas ya ENVIADAS (LUX las oculta salvo que se pida estado=ENVIADA)', async () => {
+    const estados: Array<unknown> = [];
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        estados.push(body.estado);
+        return body.estado === 'ENVIADA'
+          ? { status: 200, body: [{ numeroRuta: 'RT1', estado: 'ENVIADA', conductorNombre: 'Enrique' }] }
+          : { status: 200, body: '' as never };
+      },
+    });
+    expect(await service.obtenerDatosRuta('RT1', 'SAGUNTO')).toMatchObject({ conductorNombre: 'Enrique' });
+    expect(estados).toEqual([undefined, 'ENVIADA']);
+  });
+
+  it('obtenerDatosRuta no llama a LUX si no hay ruta o esta "NO ASIGNADA", y tolera el cuerpo vacio de LUX', async () => {
+    const llamadas: string[] = [];
+    mock.updateOptions({
+      onProc: (proc) => {
+        llamadas.push(proc);
+        return { status: 200, body: '' as never };
+      },
+    });
+    expect(await service.obtenerDatosRuta('', 'SAGUNTO')).toBeUndefined();
+    expect(await service.obtenerDatosRuta('NO ASIGNADA', 'SAGUNTO')).toBeUndefined();
+    expect(await service.obtenerDatosRuta(undefined, 'SAGUNTO')).toBeUndefined();
+    expect(llamadas).toEqual([]);
+    expect(await service.obtenerDatosRuta('RT1', 'SAGUNTO')).toBeUndefined(); // LUX: sin filas
+    expect(llamadas).toEqual(['p_expRutas', 'p_expRutas']); // sin estado y, despues, con estado ENVIADA
+  });
+
   it('crearExpedicion crea cabecera con idPedido "0" y accion ACTUALIZAR', async () => {
     mock.updateOptions({
       onProc: (proc, body) => {

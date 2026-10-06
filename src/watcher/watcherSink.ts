@@ -37,6 +37,8 @@ export interface ExpedicionActualizada {
   /** Datos extra del pedido (p_expCabeceraAza, accion=SELECT_INICIO): campos como generarDeca,
    *  serviceLevel, carga, fechaEntrega... Lo mismo que muestra el detalle de la API. */
   datosExtra?: Record<string, string>;
+  /** Datos de la ruta del pedido (p_expRutas): conductor, DNI, telefono, matriculas, transportista... */
+  datosRuta?: Record<string, string>;
   /** Lineas del pedido (p_expPedidoLineas, accion=SELECT). */
   lineas: ExpedicionLinea[];
   /** Contenedores/bultos del pedido (p_expPedidoContenedores, accion=SELECT_INICIO). */

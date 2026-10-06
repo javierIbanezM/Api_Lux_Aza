@@ -22,6 +22,10 @@ export interface WatcherConfig {
   /** Espera base entre reintentos de un refresco fallido por causa transitoria (LUX/red/sink);
    *  crece con cada intento (x1, x2, x3...) hasta 5 minutos. */
   retryDelayMs: number;
+  /** Cada cuanto se re-consulta un DECA que aun esta incompleto (envio PENDIENTE o sin shipmentId: el
+   *  envio a Docuten se crea 4-40 s despues), y cuantas veces como maximo (por defecto 15 s x 20 = 5 min). */
+  decaRecheckMs: number;
+  decaRecheckMax: number;
   /** Carpeta donde se guarda un JSON por evento (ver src/watcher/jsonFileSink.ts), solucion
    *  provisional mientras se define el destino definitivo (paso 3, ver watcherSink.ts). */
   jsonEventsDir: string;
@@ -103,6 +107,8 @@ export function loadWatcherConfig(raw: NodeJS.ProcessEnv = process.env): Watcher
     debounceMs: optionalInt('WATCHER_DEBOUNCE_MS', raw, 2000),
     maxWaitMs: optionalInt('WATCHER_MAX_WAIT_MS', raw, 15000),
     retryDelayMs: optionalInt('WATCHER_RETRY_MS', raw, 30000),
+    decaRecheckMs: optionalInt('WATCHER_DECA_RECHECK_MS', raw, 15000),
+    decaRecheckMax: optionalInt('WATCHER_DECA_RECHECK_MAX', raw, 20),
     jsonEventsDir: optionalString('WATCHER_JSON_DIR', raw, 'data/watcher-events'),
     rutasDecaDir: optionalString('WATCHER_RUTAS_DECA_DIR', raw, 'data/watcher-rutas-deca'),
     revisarFicherosDeca: optionalInt('WATCHER_REVISAR_FICHEROS_DECA', raw, 3),

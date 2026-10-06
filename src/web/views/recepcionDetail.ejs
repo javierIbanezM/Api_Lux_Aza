@@ -69,13 +69,17 @@
 <% } %>
 
 <%
-  // Flags internos de botones de la UI de Whales (no son datos): se excluyen de la tabla.
-  var lineaColumnas = lineas.length > 0
-    ? Object.keys(lineas[0]).filter(function(k) { return k.indexOf('action#') !== 0; })
-    : [];
+  // Columnas = union de las claves de TODAS las filas (una fila sin un campo no oculta la columna).
+  // Los flags internos de botones de la UI de Whales (action#...) no son datos y se excluyen.
+  function columnasDe(filas) {
+    var cols = [];
+    filas.forEach(function(f) { Object.keys(f).forEach(function(k) { if (k.indexOf('action#') !== 0 && cols.indexOf(k) === -1) { cols.push(k); } }); });
+    return cols;
+  }
+  var lineaColumnas = columnasDe(lineas);
 %>
 <div class="card">
-  <h3>Lineas</h3>
+  <h3>Lineas (<%= lineas.length %>)</h3>
   <div style="overflow-x:auto;">
   <table>
     <thead>
@@ -103,9 +107,7 @@
 
 <%
   // HUs/pallets fisicos recepcionados (p_recAlbaranHUPreinformado). Se muestran TODOS los campos.
-  var huColumnas = hus.length > 0
-    ? Object.keys(hus[0]).filter(function(k) { return k.indexOf('action#') !== 0; })
-    : [];
+  var huColumnas = columnasDe(hus);
 %>
 <div class="card">
   <h3>HUs recepcionadas (<%= hus.length %>)</h3>

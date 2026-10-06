@@ -194,7 +194,7 @@ export function createWebRouter(deps: WebRouterDependencies): Router {
 
     expedicionesService
       .obtenerDetalle(idPedido, almacen)
-      .then(({ cabecera, datosExtra, lineas, contenedores, resumenListado }) => {
+      .then(({ cabecera, datosExtra, lineas, contenedores, resumenListado, datosRuta, decaRuta }) => {
         renderPage(req, res, next, 'expedicionDetail', {
           title: `Expedicion ${idPedido}`,
           idPedido,
@@ -203,6 +203,8 @@ export function createWebRouter(deps: WebRouterDependencies): Router {
           lineas,
           contenedores,
           resumenListado,
+          datosRuta: datosRuta ?? null,
+          decaRuta: decaRuta ?? null,
           error: null,
         });
       })
@@ -215,6 +217,8 @@ export function createWebRouter(deps: WebRouterDependencies): Router {
           lineas: [],
           contenedores: [],
           resumenListado: null,
+          datosRuta: null,
+          decaRuta: null,
           error: describeError(err),
         });
       });

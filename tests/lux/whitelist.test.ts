@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { assertValidProcedureName, isWhitelistedProcedure, PROCEDURE_WHITELIST } from '../../src/lux/procedures';
 
 describe('whitelist de procedimientos', () => {
-  it('contiene exactamente los 10 procedimientos autorizados', () => {
+  it('contiene exactamente los 11 procedimientos autorizados', () => {
     expect([...PROCEDURE_WHITELIST].sort()).toEqual(
       [
         'p_expCabeceraAza',
@@ -11,6 +11,7 @@ describe('whitelist de procedimientos', () => {
         'p_expPedidoContenedores',
         'p_expRutasDetalle',
         'p_expRutasDeca',
+        'p_expRutas',
         'p_recCabeceraAza',
         'p_recAlbaranLineas',
         'p_recepcionesAza',

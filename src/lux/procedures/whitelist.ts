@@ -17,6 +17,10 @@
  * SELECT (se le pasa un `id` o un `numeroRuta`) y SELECT_ENVIOS (todos los eventos/envios de la
  * ruta). Solo lectura; lo usa el watcher de logs (src/watcher/) cuando alguien consulta una ruta.
  *
+ * `p_expRutas` (la ruta en si: conductor, DNI, telefono, matriculas, transportista, estado...): solo
+ * accion SELECT con `numeroRuta` EXACTO, solo lectura. Se usa para completar el detalle de una
+ * expedicion con los datos de su ruta (conductorNombre, conductorDni, matriculaTractora...).
+ *
  * `p_recAlbaranHUPreinformado` es el equivalente de `p_expPedidoContenedores` pero para
  * recepciones (detalle por HU/pallet fisico, no por linea de albaran): confirmado contra el
  * servidor real (accion=SELECT_INICIO, idParent=<idAlbaran>), forma de datos propia (numeroSerie,
@@ -29,6 +33,7 @@ export const PROCEDURE_WHITELIST = [
   'p_expPedidoContenedores',
   'p_expRutasDetalle',
   'p_expRutasDeca',
+  'p_expRutas',
   'p_recCabeceraAza',
   'p_recAlbaranLineas',
   'p_recepcionesAza',
