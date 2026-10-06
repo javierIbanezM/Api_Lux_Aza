@@ -25,6 +25,42 @@ describe('RecepcionesService', () => {
     await mock.close();
   });
 
+  it('obtenerDetalle reune cabecera, datos extra, lineas, HUs y la fila del listado (los mismos datos que guarda el watcher)', async () => {
+    const llamadas: string[] = [];
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        llamadas.push(`${proc}:${body.accion}`);
+        if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idAlbaran: '7', albaran: 'REC1', propietario: 'ROC' }] };
+        }
+        if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_INICIO') {
+          return { status: 200, body: [{ matricula: '1234ABC', telefono: '' }] };
+        }
+        if (proc === 'p_recAlbaranLineas') {
+          return { status: 200, body: [{ id: '1', referencia: 'R1' }] };
+        }
+        if (proc === 'p_recAlbaranHUPreinformado') {
+          expect(body.idParent).toBe('7');
+          return { status: 200, body: [{ id: '9', hu: 'H1', ubicacion: '' }, { id: '10', hu: 'H2', ubicacion: 'A-01' }] };
+        }
+        if (proc === 'p_recepcionesAza') {
+          expect(body.albaran).toBe('REC1'); // el listado se pide con el texto del albaran de la cabecera
+          return { status: 200, body: [{ id: '7', albaran: 'REC1', estado: 'CERRADO', fechaCierre: '' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+
+    const d = await service.obtenerDetalle('7', 'SAGUNTO');
+
+    expect(d.cabecera.albaran).toBe('REC1');
+    expect(d.datosExtra).toEqual({ matricula: '1234ABC', telefono: '' }); // los vacios se conservan
+    expect(d.lineas).toHaveLength(1);
+    expect(d.hus.map((h) => h.hu)).toEqual(['H1', 'H2']);
+    expect(d.resumenListado).toMatchObject({ estado: 'CERRADO', fechaCierre: '' });
+    expect(llamadas).toEqual(expect.arrayContaining(['p_recAlbaranHUPreinformado:SELECT_INICIO', 'p_recepcionesAza:SELECT']));
+  });
+
   it('crearRecepcion crea cabecera con idAlbaran "0" y accion ACTUALIZAR', async () => {
     mock.updateOptions({
       onProc: (proc, body) => {

@@ -261,7 +261,7 @@ export function createWebRouter(deps: WebRouterDependencies): Router {
 
     recepcionesService
       .obtenerDetalle(idAlbaran, almacen)
-      .then(async ({ cabecera, datosExtra, lineas }) => {
+      .then(async ({ cabecera, datosExtra, lineas, hus, resumenListado }) => {
         // Zonas de descarga validas para el propietario de esta recepcion (p_recCabeceraAza,
         // accion=SELECT_DESCARGAS). No documentado en el PDF; confirmado por ejemplo real de
         // uso, ver docs/lux-api-analysis.md §15.
@@ -272,6 +272,8 @@ export function createWebRouter(deps: WebRouterDependencies): Router {
           cabecera,
           datosExtra,
           lineas,
+          hus,
+          resumenListado,
           descargas,
           error: null,
         });
@@ -283,6 +285,8 @@ export function createWebRouter(deps: WebRouterDependencies): Router {
           cabecera: null,
           datosExtra: null,
           lineas: [],
+          hus: [],
+          resumenListado: null,
           descargas: [],
           error: describeError(err),
         });

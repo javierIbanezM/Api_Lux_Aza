@@ -80,7 +80,9 @@ Solo rutas: pedidos y albaranes se recuperan por la posicion guardada de cada lo
 Ficheros revisados: del log de LUX, `WATCHER_REVISAR_FICHEROS_DECA` (por defecto 3: `lux.log.0`, `.1` y `.2`);
 LUX rota cada pocas horas en un dia de mucha actividad, asi que sube el valor si el watcher puede estar parado
 mucho rato (cada fichero son ~10 MB). Del log de LUX_mobile solo `.1` y `.0`.
-(carpeta propia, `WATCHER_RUTAS_DECA_DIR`; una SUBCARPETA por ruta con el nombre de la ruta, con el JSON mas
+(carpeta propia, `WATCHER_RUTAS_DECA_DIR`; una SUBCARPETA por ruta llamada `<fecha>--<ruta>` (p.ej.
+`2026-10-05T17-25-02--RT00013415_2026_susmedios`: la fecha de CREACION del DECA va delante para que el explorador
+las ordene cronologicamente; las carpetas del esquema antiguo se renombran solas al arrancar), con el JSON mas
 reciente dentro y los ficheros descargados de Docuten, ver mas abajo). Cada JSON lleva la consulta hecha
 a la API (`consulta.llamadas`: procedimiento, accion, parametros, almacen y filas de cada llamada) y los
 datos devueltos (`deca`, `envios`). El listado sin ruta (`''`, `%%`, `NO ASIGNADA`) no cuenta, y las

@@ -1,6 +1,7 @@
-import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { buscarCarpetaDeRuta, nombreCarpetaRuta, prefijoFecha } from './carpetasDeca';
 import type { Logger } from '../logging';
 import type {
   AlbaranActualizado,
@@ -202,11 +203,28 @@ export function createJsonFileSink(
     onRutaDecaActualizada: async (result: RutaDecaActualizada) => {
       const nombreRuta = sanitizar(result.numeroRuta);
       const sufijo = `rutadeca-${nombreRuta}`;
-      // Una carpeta por ruta: dentro, el JSON (con la consulta a la API y los datos) y los
-      // ficheros descargados de Docuten.
-      const carpetaRuta = join(rutasDecaDir, nombreRuta);
       await enCola(sufijo, async () => {
-        await asegurarDir(carpetaRuta);
+        // Una carpeta por ruta, con la FECHA DE CREACION DEL DECA delante (`<fecha>--<ruta>`) para que
+        // el explorador las ordene cronologicamente. Dentro: el JSON (con la consulta a la API y los
+        // datos) y los ficheros descargados de Docuten. Si ya existe con otro nombre (esquema antiguo,
+        // sin fecha, o fecha distinta) se renombra en vez de crear una segunda.
+        const respaldo = Date.parse(result.consultadoEn);
+        const deseada = nombreCarpetaRuta(
+          prefijoFecha(result.deca.map((x) => x.fechaCreacion), Number.isNaN(respaldo) ? Date.now() : respaldo),
+          nombreRuta,
+        );
+        const existente = await buscarCarpetaDeRuta(rutasDecaDir, nombreRuta);
+        let nombreCarpeta = existente ?? deseada;
+        if (existente && existente !== deseada) {
+          try {
+            await rename(join(rutasDecaDir, existente), join(rutasDecaDir, deseada));
+            nombreCarpeta = deseada;
+          } catch {
+            // destino ocupado o en uso: se sigue usando la carpeta que ya existe
+          }
+        }
+        const carpetaRuta = join(rutasDecaDir, nombreCarpeta);
+        await mkdir(carpetaRuta, { recursive: true });
         const { descargas, ...resto } = result;
         const metadatos = [];
         // Una ruta puede tener VARIOS envios DECA (p.ej. uno ANULADO y otro FIRMADO tras volver a

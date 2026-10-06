@@ -58,12 +58,12 @@ export function createRecepcionesController(service: RecepcionesService, catalog
     obtenerDetalle: asyncHandler(async (req: Request, res: Response) => {
       const idAlbaran = req.params.idAlbaran as string;
       const almacen = resolveAlmacen(req);
-      const { cabecera, datosExtra, lineas } = await service.obtenerDetalle(idAlbaran, almacen);
+      const { cabecera, datosExtra, lineas, hus, resumenListado } = await service.obtenerDetalle(idAlbaran, almacen);
       // Zonas de descarga validas para el propietario de esta recepcion (p_recCabeceraAza,
       // accion=SELECT_DESCARGAS). No documentado en el PDF del proveedor; confirmado por ejemplo
       // real de uso, ver docs/lux-api-analysis.md §15.
       const descargas = await catalogosService.selectDescargas(cabecera.propietario, almacen);
-      res.status(200).json({ cabecera, datosExtra, lineas, descargas });
+      res.status(200).json({ cabecera, datosExtra, lineas, hus, resumenListado, descargas });
     }),
 
     obtenerLineas: asyncHandler(async (req: Request, res: Response) => {

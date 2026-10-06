@@ -85,6 +85,30 @@ deploy/instalar-arranque-pm2.ps1 y la parte del README sobre PM2. Llevar el comm
    - src/watcher/watcherConfig.ts, luxActionWatcher.ts, .env.example; tests (252 en verde).
    - Prueba real: 5 ficheros leidos, 29 GENERAR_DECA, los 5 recuperados, 27 carpetas, 0 avisos.
 
+5g. PARIDAD ENTRE EL DETALLE (API + WEB) Y EL JSON DEL WATCHER  (SIN COMMIT)
+   - Hallazgo: en expediciones el detalle ya recogia los mismos campos que el watcher; en RECEPCIONES
+     faltaban 2 secciones que el watcher si guarda (listado p_recepcionesAza: 43 campos, y HUs
+     p_recAlbaranHUPreinformado: 14 campos, ~400 filas), y el watcher no guardaba datosExtra.
+   - Detalle de recepciones (API GET /api/recepciones/:id y web /almacen/recepciones/:id) ahora devuelve
+     tambien `hus` y `resumenListado` (la web: tarjeta "Datos del listado" y tabla de HUs con todas las
+     columnas, vacias incluidas). RecepcionesService.obtenerDetalle(+hus, +resumenListado).
+   - El watcher guarda `datosExtra` en los JSON de expediciones (8 campos) y recepciones (9 campos):
+     +1 llamada a LUX por refresco (en paralelo con lineas/contenedores/HUs).
+   - Prueba real: cabecera, listado, datosExtra, lineas y contenedores/HUs coinciden campo a campo entre
+     el JSON del watcher y el detalle de la API (expedicion y recepcion). 255 tests en verde.
+   - Los JSON ya generados NO llevan datosExtra hasta que llegue un evento nuevo de ese pedido/albaran.
+   - src/services/recepciones/RecepcionesService.ts, src/controllers/recepcionesController.ts,
+     src/web/webRouter.ts, src/web/views/recepcionDetail.ejs, src/watcher/luxActionWatcher.ts,
+     watcherSink.ts + tests.
+
+5h. CARPETAS DE watcher-rutas-deca ORDENADAS POR FECHA  (SIN COMMIT)
+   - Cada carpeta de ruta pasa de `<ruta>` a `<fecha>--<ruta>` (p.ej. 2026-10-05T17-25-02--RT00013415_2026_susmedios):
+     la fecha es la de CREACION del DECA (la mas antigua si hay varios envios), estable, asi no se renombra
+     en cada actualizacion; el explorador (orden alfabetico) las muestra cronologicamente (mas antiguas arriba).
+   - Las carpetas antiguas se renombran solas: al arrancar el watcher (migrarCarpetas) y, por ruta, al escribir.
+   - src/watcher/carpetasDeca.ts (nuevo), jsonFileSink.ts, scripts/watchLuxLogs.ts; tests (261 en verde).
+   - En el servidor la migracion ocurre en su proximo arranque (pm2 restart api-whales-watcher).
+
 6. DOCS Y OTROS: README.md, informes/mejoras-pendientes.txt, .gitignore (bruno/). La coleccion de
    Bruno (bruno/docuten/) NO se versiona: lleva la clave.
 

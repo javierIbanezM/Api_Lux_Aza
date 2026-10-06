@@ -600,6 +600,7 @@ describe('watcher/LuxActionWatcher', () => {
       motivos: ['expedicionCerradaOficina'],
       cabecera: { mensaje: 'OK', idPedido: '11115', pedido: 'EXP0000074' },
       listado: { id: '11115', pedido: 'EXP0000074', propietario: 'AZA LOGISTICS SLU', estado: 'CERRADO' },
+      datosExtra: {},
       lineas: [],
       contenedores: [],
     });
@@ -1048,6 +1049,46 @@ describe('watcher/LuxActionWatcher', () => {
     await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.rutaDecaConsultada'), 5000);
 
     expect(onRutaDecaActualizada).not.toHaveBeenCalled();
+  });
+
+  it('el JSON del watcher incluye los datos extra (expedicion y recepcion), con los campos vacios', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idPedido: '11115', pedido: 'EXP0000074' }] };
+        }
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_INICIO') {
+          expect(body.idParent).toBe('11115');
+          return { status: 200, body: [{ generarDeca: 'SI', carga: '' }] };
+        }
+        if (proc === 'p_expedicionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '11115', pedido: 'EXP0000074', estado: 'ASIGNADO' }] };
+        }
+        if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idAlbaran: '7838', albaran: 'REC0000068' }] };
+        }
+        if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_INICIO') {
+          return { status: 200, body: [{ matricula: '1234ABC', telefono: '' }] };
+        }
+        if (proc === 'p_recepcionesAza' && body.accion === 'SELECT') {
+          return { status: 200, body: [{ id: '7838', albaran: 'REC0000068', estado: 'RECEPCION' }] };
+        }
+        return { status: 200, body: [] };
+      },
+    });
+    const onExpedicionActualizada = vi.fn();
+    const onAlbaranActualizado = vi.fn();
+    await startAndWaitBaseline({ onExpedicionActualizada, onAlbaranActualizado });
+
+    appendFileSync(luxLogPath, lineaCierre(1));
+    appendFileSync(
+      mobileLogPath,
+      "30-sep-2026 15:36:59 INFO:   [] exec p_wm_recepcionCerrar @estado='CONFIRMAR_CERRAR',@valor='',@almacen='SAGUNTO',@usuario='ARodriguezSP',@identificador='7838'\n",
+    );
+
+    await waitUntil(() => onExpedicionActualizada.mock.calls.length > 0 && onAlbaranActualizado.mock.calls.length > 0, 8000);
+    expect(onExpedicionActualizada.mock.calls[0]?.[0].datosExtra).toEqual({ generarDeca: 'SI', carga: '' });
+    expect(onAlbaranActualizado.mock.calls[0]?.[0].datosExtra).toEqual({ matricula: '1234ABC', telefono: '' });
   });
 
   it('si el sink falla, el refresco ya registrado en el log no se ve afectado (se registra watcher.sinkError aparte)', async () => {

@@ -34,6 +34,9 @@ export interface ExpedicionActualizada {
    *  docs/lux-api-analysis.md §6.3). `propietario`/`estado` de arriba vienen de aqui, pero esta
    *  fila trae mucho mas que esos dos campos. */
   listado?: ExpedicionListItem;
+  /** Datos extra del pedido (p_expCabeceraAza, accion=SELECT_INICIO): campos como generarDeca,
+   *  serviceLevel, carga, fechaEntrega... Lo mismo que muestra el detalle de la API. */
+  datosExtra?: Record<string, string>;
   /** Lineas del pedido (p_expPedidoLineas, accion=SELECT). */
   lineas: ExpedicionLinea[];
   /** Contenedores/bultos del pedido (p_expPedidoContenedores, accion=SELECT_INICIO). */
@@ -55,6 +58,9 @@ export interface AlbaranActualizado {
   /** Fila completa del listado (p_recepcionesAza, accion=SELECT). Igual que en expediciones,
    *  trae columnas que no estan en `cabecera`; `propietario`/`estado` de arriba salen de aqui. */
   listado?: RecepcionListItem;
+  /** Datos extra del albaran (p_recCabeceraAza, accion=SELECT_INICIO): matricula, descarga, nombre,
+   *  telefono... Lo mismo que muestra el detalle de la API. */
+  datosExtra?: Record<string, string>;
   /** Lineas del albaran (p_recAlbaranLineas, accion=SELECT). */
   lineas: RecepcionLinea[];
   /** HUs/pallets fisicos recepcionados (p_recAlbaranHUPreinformado, accion=SELECT_INICIO).

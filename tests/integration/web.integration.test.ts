@@ -120,6 +120,47 @@ describe('Integracion: interfaz web de almacen (/almacen/*)', () => {
     expect(sinSecure).not.toMatch(/;\s*Secure/i);
   });
 
+  it('el detalle web de una recepcion muestra el listado y las HUs (con sus campos vacios), igual que el JSON del watcher', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: [{ mensaje: 'OK', idAlbaran: '99', albaran: 'ALB-0001', propietario: 'AZA' }] };
+        }
+        if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_INICIO') {
+          return { status: 200, body: [{ matricula: '1234ABC' }] };
+        }
+        if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_DESCARGAS') {
+          return { status: 200, body: [] };
+        }
+        if (proc === 'p_recAlbaranLineas') {
+          return { status: 200, body: [{ id: '1', referencia: 'REF-1' }] };
+        }
+        if (proc === 'p_recAlbaranHUPreinformado') {
+          return { status: 200, body: [{ id: '5', hu: 'HU-PRUEBA-01', piezas: '40', ubicacion: '', 'action#borrar': '1' }] };
+        }
+        if (proc === 'p_recepcionesAza') {
+          return { status: 200, body: [{ id: '99', albaran: 'ALB-0001', estado: 'CERRADO', fechaCierre: '' }] };
+        }
+        return { status: 404, body: { mensaje: 'no mockeado' } };
+      },
+    });
+    const login = await httpRequest(appUrl, 'POST', '/almacen/login', {
+      body: 'username=almacen1&password=password-seria-123',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+    const cookie = cookieFromSetCookie(login.headers['set-cookie']);
+
+    const r = await httpRequest(appUrl, 'GET', '/almacen/recepciones/99', { headers: { Cookie: cookie } });
+
+    expect(r.status).toBe(200);
+    expect(r.text).toContain('Datos del listado (p_recepcionesAza)'); // fila del listado
+    expect(r.text).toContain('fechaCierre'); // campo vacio: se muestra igualmente
+    expect(r.text).toContain('HUs recepcionadas (1)');
+    expect(r.text).toContain('HU-PRUEBA-01');
+    expect(r.text).toContain('<th>ubicacion</th>'); // columna vacia incluida
+    expect(r.text).not.toContain('action#borrar'); // los flags internos de botones no se muestran
+  });
+
   it('logout invalida la sesion: tras cerrar sesion, el listado vuelve a redirigir a login', async () => {
     const loginResponse = await httpRequest(appUrl, 'POST', '/almacen/login', {
       body: 'username=almacen1&password=password-seria-123',

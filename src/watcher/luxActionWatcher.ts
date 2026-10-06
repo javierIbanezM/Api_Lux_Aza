@@ -835,17 +835,20 @@ export class LuxActionWatcher {
 
     let lineas: ExpedicionLinea[] = [];
     let contenedores: ExpedicionContenedor[] = [];
+    let datosExtra: Record<string, string> = {};
     if (idPedido) {
       if (!cabecera) {
         cabecera = await this.fetchBestEffort(() => this.expedicionesService.obtenerExpedicion(idPedido, almacen), 'cabecera');
       }
       // Independientes entre si: en paralelo (antes, una tras otra).
-      const [lineasRes, contenedoresRes] = await Promise.all([
+      const [lineasRes, contenedoresRes, datosExtraRes] = await Promise.all([
         this.fetchBestEffort(() => this.expedicionesService.obtenerLineasExpedicion(idPedido, almacen), 'lineas'),
         this.fetchBestEffort(() => this.expedicionesService.obtenerContenedoresExpedicion(idPedido, almacen), 'contenedores'),
+        this.fetchBestEffort(() => this.expedicionesService.obtenerDatosExtraExpedicion(idPedido, almacen), 'datosExtra'),
       ]);
       lineas = lineasRes ?? [];
       contenedores = contenedoresRes ?? [];
+      datosExtra = datosExtraRes ?? {};
     }
 
     return {
@@ -856,6 +859,7 @@ export class LuxActionWatcher {
       estado: resumen?.estado,
       cabecera,
       listado: resumen,
+      datosExtra,
       lineas,
       contenedores,
     };
@@ -885,16 +889,19 @@ export class LuxActionWatcher {
 
     let lineas: RecepcionLinea[] = [];
     let hus: RecepcionHU[] = [];
+    let datosExtra: Record<string, string> = {};
     if (idAlbaran) {
       if (!cabecera) {
         cabecera = await this.fetchBestEffort(() => this.recepcionesService.obtenerRecepcion(idAlbaran, almacen), 'cabecera');
       }
-      const [lineasRes, husRes] = await Promise.all([
+      const [lineasRes, husRes, datosExtraRes] = await Promise.all([
         this.fetchBestEffort(() => this.recepcionesService.obtenerLineasRecepcion(idAlbaran, almacen), 'lineas'),
         this.fetchBestEffort(() => this.recepcionesService.obtenerHUsRecepcion(idAlbaran, almacen), 'hus'),
+        this.fetchBestEffort(() => this.recepcionesService.obtenerDatosExtraRecepcion(idAlbaran, almacen), 'datosExtra'),
       ]);
       lineas = lineasRes ?? [];
       hus = husRes ?? [];
+      datosExtra = datosExtraRes ?? {};
     }
 
     return {
@@ -905,6 +912,7 @@ export class LuxActionWatcher {
       estado: resumen?.estado,
       cabecera,
       listado: resumen,
+      datosExtra,
       lineas,
       hus,
     };

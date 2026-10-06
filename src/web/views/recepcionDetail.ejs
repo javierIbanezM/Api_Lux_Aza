@@ -18,6 +18,19 @@
   </div>
 <% } %>
 
+<% if (resumenListado) { %>
+  <div class="card">
+    <h3>Datos del listado (p_recepcionesAza)</h3>
+    <table>
+      <tbody>
+        <% Object.keys(resumenListado).forEach(function(key) { %>
+          <tr><th><%= key %></th><td><%= resumenListado[key] %></td></tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+<% } %>
+
 <% if (datosExtra && Object.keys(datosExtra).length > 0) { %>
   <div class="card">
     <h3>Datos extra</h3>
@@ -80,6 +93,39 @@
         <tr>
           <% lineaColumnas.forEach(function(key) { %>
             <td><%= linea[key] %></td>
+          <% }); %>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<%
+  // HUs/pallets fisicos recepcionados (p_recAlbaranHUPreinformado). Se muestran TODOS los campos.
+  var huColumnas = hus.length > 0
+    ? Object.keys(hus[0]).filter(function(k) { return k.indexOf('action#') !== 0; })
+    : [];
+%>
+<div class="card">
+  <h3>HUs recepcionadas (<%= hus.length %>)</h3>
+  <div style="overflow-x:auto;">
+  <table>
+    <thead>
+      <tr>
+        <% huColumnas.forEach(function(key) { %>
+          <th><%= key %></th>
+        <% }); %>
+      </tr>
+    </thead>
+    <tbody>
+      <% if (hus.length === 0) { %>
+        <tr><td>Sin HUs.</td></tr>
+      <% } %>
+      <% hus.forEach(function(hu) { %>
+        <tr>
+          <% huColumnas.forEach(function(key) { %>
+            <td><%= hu[key] %></td>
           <% }); %>
         </tr>
       <% }); %>

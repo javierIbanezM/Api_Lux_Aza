@@ -21,6 +21,7 @@ import { buildDependencies } from '../src/app';
 import { LuxActionWatcher } from '../src/watcher/luxActionWatcher';
 import { createJsonFileSink } from '../src/watcher/jsonFileSink';
 import { DocutenClient } from '../src/docuten';
+import { migrarCarpetas } from '../src/watcher/carpetasDeca';
 
 function bootstrap(): void {
   const logger = createLogger((process.env.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error') ?? 'info');
@@ -73,7 +74,18 @@ function bootstrap(): void {
     docutenClient,
   );
 
-  watcher.start();
+  // Las carpetas de rutas con el esquema antiguo (solo el nombre de la ruta) pasan a `<fecha>--<ruta>`.
+  // Se hace ANTES de arrancar el watcher: una carpeta con ficheros abiertos no se puede renombrar, y
+  // al arrancar el watcher empieza a escribir en ellas.
+  migrarCarpetas(watcherConfig.rutasDecaDir, logger)
+    .catch((err: unknown) => {
+      logger.warn('No se pudo migrar las carpetas de watcher-rutas-deca', {
+        operacion: 'watcher.carpetasDeca.error',
+        resultado: 'ERROR',
+        error: err instanceof Error ? err.message : String(err),
+      });
+    })
+    .finally(() => watcher.start());
 
   const shutdown = (signal: string): void => {
     logger.info('Watcher de logs LUX detenido', {

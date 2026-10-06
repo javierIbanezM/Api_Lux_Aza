@@ -23,12 +23,17 @@ import {
 
 export type { LineaFallida };
 
-/** Vista de una recepcion: cabecera + datos extra + lineas (las zonas de descarga son de otro
- *  servicio, ver CatalogosService.selectDescargas). */
+/** Vista de una recepcion: cabecera + datos extra + lineas + HUs + fila del listado (las zonas de
+ *  descarga son de otro servicio, ver CatalogosService.selectDescargas). Es lo mismo que recoge el
+ *  watcher en sus JSON (mas los datos extra). */
 export interface RecepcionDetalle {
   cabecera: Recepcion;
   datosExtra: Record<string, string>;
   lineas: RecepcionLinea[];
+  /** HUs/pallets fisicos recepcionados (p_recAlbaranHUPreinformado). */
+  hus: RecepcionHU[];
+  /** Fila completa del visor (p_recepcionesAza): columnas que no trae p_recCabeceraAza. */
+  resumenListado: RecepcionListItem | undefined;
 }
 
 export interface CrearRecepcionResult {
@@ -176,14 +181,17 @@ export class RecepcionesService {
     return rows[0] as Recepcion;
   }
 
-  /** Cabecera + datos extra + lineas en paralelo. Unico punto que ensambla el detalle. */
+  /** Cabecera + datos extra + lineas + HUs en paralelo y, despues, la fila del listado (que
+   *  necesita `cabecera.albaran`). Unico punto que ensambla el detalle. */
   async obtenerDetalle(idAlbaran: string, almacen?: string): Promise<RecepcionDetalle> {
-    const [cabecera, datosExtra, lineas] = await Promise.all([
+    const [cabecera, datosExtra, lineas, hus] = await Promise.all([
       this.obtenerRecepcion(idAlbaran, almacen),
       this.obtenerDatosExtraRecepcion(idAlbaran, almacen),
       this.obtenerLineasRecepcion(idAlbaran, almacen),
+      this.obtenerHUsRecepcion(idAlbaran, almacen),
     ]);
-    return { cabecera, datosExtra, lineas };
+    const resumenListado = await this.obtenerResumenListadoRecepcion(cabecera.albaran, almacen);
+    return { cabecera, datosExtra, lineas, hus, resumenListado };
   }
 
   async obtenerDatosExtraRecepcion(idAlbaran: string, almacen?: string): Promise<Record<string, string>> {

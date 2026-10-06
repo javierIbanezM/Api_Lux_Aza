@@ -154,7 +154,7 @@ describe('Integracion: flujo completo de alta de recepcion', () => {
     expect(response.body.error.type).toBe('INVALID_JSON');
   });
 
-  it('consulta el detalle completo de una recepcion (cabecera + extra + lineas)', async () => {
+  it('consulta el detalle completo de una recepcion (cabecera + extra + lineas + HUs + listado + descargas)', async () => {
     mock.updateOptions({
       onProc: (proc, body) => {
         if (proc === 'p_recCabeceraAza' && body.accion === 'SELECT_ONE') {
@@ -170,6 +170,14 @@ describe('Integracion: flujo completo de alta de recepcion', () => {
         if (proc === 'p_recAlbaranLineas' && body.accion === 'SELECT') {
           return { status: 200, body: [{ id: '88010', referencia: 'REF-100' }] };
         }
+        if (proc === 'p_recAlbaranHUPreinformado' && body.accion === 'SELECT_INICIO') {
+          expect(body.idParent).toBe('3012');
+          return { status: 200, body: [{ id: '377114', hu: '000008901', piezas: '40.0000', ubicacion: '' }] };
+        }
+        if (proc === 'p_recepcionesAza' && body.accion === 'SELECT') {
+          expect(body.albaran).toBe('ALB-77');
+          return { status: 200, body: [{ id: '3012', albaran: 'ALB-77', propietario: 'CAMELIA', estado: 'RECEPCION', fechaCreacion: '' }] };
+        }
         return { status: 404, body: { mensaje: 'no mockeado' } };
       },
     });
@@ -179,6 +187,9 @@ describe('Integracion: flujo completo de alta de recepcion', () => {
     expect(detalle.body.cabecera.idAlbaran).toBe('3012');
     expect(detalle.body.datosExtra.matricula).toBe('1234ABC');
     expect(detalle.body.lineas).toHaveLength(1);
+    // Igual que el JSON del watcher: HUs (con los campos vacios incluidos) y la fila del listado.
+    expect(detalle.body.hus).toEqual([{ id: '377114', hu: '000008901', piezas: '40.0000', ubicacion: '' }]);
+    expect(detalle.body.resumenListado).toMatchObject({ albaran: 'ALB-77', estado: 'RECEPCION', fechaCreacion: '' });
     expect(detalle.body.descargas).toEqual([{ descarga: 'MUELLE1' }]);
   });
 

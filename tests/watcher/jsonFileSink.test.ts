@@ -341,8 +341,10 @@ describe('watcher/jsonFileSink DECA de rutas', () => {
     consulta,
     envios: [],
   };
-  const deca = (estado: string) => [{ shipmentReference: 'RT-AZA', estado } as never];
+  const deca = (estado: string) => [{ shipmentReference: 'RT-AZA', estado, fechaCreacion: '05/10/2026 17:25:02' } as never];
   const CARPETA_RUTA = 'RT00013615_2026_COMP_MAMENTRANS007_S_L_';
+  /** Carpeta real de la ruta: `<fecha>--<ruta>` (la fecha, la de creacion del DECA, va delante). */
+  const dirRuta = (raiz: string): string => join(raiz, readdirSync(raiz).find((n) => n.endsWith(`--${CARPETA_RUTA}`)) as string);
 
   it('guarda en una CARPETA POR RUTA el JSON (consulta a la API + datos) y reemplaza el anterior', async () => {
     const raiz = mkdtempSync(join(tmpdir(), 'watcher-json-'));
@@ -354,11 +356,11 @@ describe('watcher/jsonFileSink DECA de rutas', () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
       await sink.onRutaDecaActualizada?.({ ...base, consultadoEn: '2026-10-05T08:05:00Z', deca: deca('ENVIADO'), descargas: [] });
 
-      expect(readdirSync(rutas)).toEqual([CARPETA_RUTA]); // la carpeta lleva el nombre de la ruta
-      const ficheros = readdirSync(join(rutas, CARPETA_RUTA));
+      expect(readdirSync(rutas)).toEqual([`2026-10-05T17-25-02--${CARPETA_RUTA}`]); // fecha de creacion del DECA + nombre de la ruta
+      const ficheros = readdirSync(dirRuta(rutas));
       expect(ficheros).toHaveLength(1);
       expect(ficheros[0]).toMatch(/^\d{4}-\d{2}-\d{2}T.*--rutadeca-RT00013615_2026_COMP_MAMENTRANS007_S_L_\.json$/);
-      const contenido = JSON.parse(readFileSync(join(rutas, CARPETA_RUTA, ficheros[0] as string), 'utf-8'));
+      const contenido = JSON.parse(readFileSync(join(dirRuta(rutas), ficheros[0] as string), 'utf-8'));
       expect(contenido.deca[0].estado).toBe('ENVIADO'); // los datos
       expect(contenido.consulta.llamadas[0]).toMatchObject({ procedimiento: 'p_expRutasDeca', accion: 'SELECT', parametros: { numeroRuta: base.numeroRuta } }); // la consulta
       expect(existsSync(eventos)).toBe(false); // la carpeta de eventos no se toca
@@ -388,7 +390,7 @@ describe('watcher/jsonFileSink DECA de rutas', () => {
         ],
       });
 
-      const dir = join(raiz, CARPETA_RUTA);
+      const dir = dirRuta(raiz);
       const nombres = readdirSync(dir).sort();
       expect(nombres).toHaveLength(2); // el JSON + UN solo PDF (no dos copias iguales)
       expect(nombres).toContain(doc.fileName);
@@ -428,15 +430,15 @@ describe('watcher/jsonFileSink DECA de rutas', () => {
           d('cccccccc-3', 'include-all', 'TRES'), d('cccccccc-3', 'simple', 'TRES'),
         ],
       });
-      const pdfs = readdirSync(join(raiz, CARPETA_RUTA)).filter((n) => n.endsWith('.pdf')).sort();
+      const pdfs = readdirSync(dirRuta(raiz)).filter((n) => n.endsWith('.pdf')).sort();
       expect(pdfs).toEqual([
         'Porte ruta RT1-AZA [aaaaaaaa ANULADO].pdf',
         'Porte ruta RT1-AZA [bbbbbbbb ANULADO].pdf',
         'Porte ruta RT1-AZA [cccccccc FIRMADO].pdf',
       ]);
-      expect(readFileSync(join(raiz, CARPETA_RUTA, pdfs[0] as string), 'utf-8')).toBe('UNO');
-      expect(readFileSync(join(raiz, CARPETA_RUTA, pdfs[1] as string), 'utf-8')).toBe('DOS');
-      expect(readFileSync(join(raiz, CARPETA_RUTA, pdfs[2] as string), 'utf-8')).toBe('TRES');
+      expect(readFileSync(join(dirRuta(raiz), pdfs[0] as string), 'utf-8')).toBe('UNO');
+      expect(readFileSync(join(dirRuta(raiz), pdfs[1] as string), 'utf-8')).toBe('DOS');
+      expect(readFileSync(join(dirRuta(raiz), pdfs[2] as string), 'utf-8')).toBe('TRES');
     } finally {
       rmSync(raiz, { recursive: true, force: true });
     }
@@ -446,16 +448,18 @@ describe('watcher/jsonFileSink DECA de rutas', () => {
     const raiz = mkdtempSync(join(tmpdir(), 'watcher-json-'));
     try {
       const sink = createJsonFileSink(join(raiz, 'events'), createLogger('error'), undefined, raiz);
-      const dir = join(raiz, CARPETA_RUTA);
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, 'Porte ruta RT1-AZA (simple).pdf'), 'VIEJO'); // esquema antiguo
+      const antigua = join(raiz, CARPETA_RUTA); // carpeta del esquema antiguo (sin fecha)
+      mkdirSync(antigua, { recursive: true });
+      writeFileSync(join(antigua, 'Porte ruta RT1-AZA (simple).pdf'), 'VIEJO'); // esquema antiguo
       const doc = { fileName: 'Porte ruta RT1-AZA.pdf', bytes: 4, datos: Buffer.from('NUEVO') };
       const ok = { shipmentId: 'S1', variante: 'include-all' as const, url: 'u', status: 200, ok: true, extension: 'json', bytes: 1, documentos: [doc] };
       const fallo = { shipmentId: 'S1', variante: 'include-all' as const, url: 'u', status: 401, ok: false, extension: 'bin', bytes: 0, error: 'sin permiso' };
 
       // Descarga fallida: los ficheros existentes se conservan.
       await sink.onRutaDecaActualizada?.({ ...base, consultadoEn: 't', deca: deca('ENVIADO'), descargas: [fallo] });
+      const dir = dirRuta(raiz); // la carpeta antigua se renombro con la fecha, conservando su contenido
       expect(readdirSync(dir).filter((n) => n.endsWith('.pdf'))).toEqual(['Porte ruta RT1-AZA (simple).pdf']);
+      expect(existsSync(antigua)).toBe(false);
 
       // Descarga correcta: queda solo lo actual.
       await sink.onRutaDecaActualizada?.({ ...base, consultadoEn: 't2', deca: deca('ENVIADO'), descargas: [ok] });
@@ -474,10 +478,10 @@ describe('watcher/jsonFileSink DECA de rutas', () => {
         shipmentId: 'S', variante, url: 'u', status: 200, ok: true, extension: 'json', bytes: 1, documentos: [mk(txt)],
       });
       await sink.onRutaDecaActualizada?.({ ...base, consultadoEn: 't', deca: deca('X'), descargas: [d('include-all', 'AAAA'), d('simple', 'BBBB')] });
-      const pdfs = readdirSync(join(raiz, CARPETA_RUTA)).filter((n) => n.endsWith('.pdf')).sort();
+      const pdfs = readdirSync(dirRuta(raiz)).filter((n) => n.endsWith('.pdf')).sort();
       expect(pdfs).toEqual(['Porte (simple).pdf', 'Porte.pdf']);
-      expect(readFileSync(join(raiz, CARPETA_RUTA, 'Porte.pdf'), 'utf-8')).toBe('AAAA');
-      expect(readFileSync(join(raiz, CARPETA_RUTA, 'Porte (simple).pdf'), 'utf-8')).toBe('BBBB');
+      expect(readFileSync(join(dirRuta(raiz), 'Porte.pdf'), 'utf-8')).toBe('AAAA');
+      expect(readFileSync(join(dirRuta(raiz), 'Porte (simple).pdf'), 'utf-8')).toBe('BBBB');
     } finally {
       rmSync(raiz, { recursive: true, force: true });
     }
@@ -533,6 +537,51 @@ describe('watcher/jsonFileSink: por defecto NO se borra por estado final (conser
       expect(readdirSync(dir)).toHaveLength(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('watcher/jsonFileSink: carpetas de rutas ordenadas por fecha', () => {
+  const ruta = (nombre: string, fechaCreacion: string) => ({
+    numeroRuta: nombre,
+    consultaOriginal: nombre,
+    almacen: 'SAGUNTO',
+    motivos: ['decaGenerada' as const],
+    consulta: { filtroLog: nombre, metodoResolucion: 'id-ruta' as const, llamadas: [] },
+    consultadoEn: '2026-10-06T08:00:00Z',
+    deca: [{ shipmentReference: `${nombre}-AZA`, estado: 'ENVIADO', fechaCreacion } as never],
+    envios: [],
+    descargas: [],
+  });
+
+  it('el orden ALFABETICO de las carpetas coincide con el de creacion del DECA, no con el nombre de la ruta', async () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    try {
+      const sink = createJsonFileSink(join(raiz, 'events'), createLogger('error'), undefined, raiz);
+      // Por nombre irian RT0001, RT0002, RT0003; por fecha de creacion: RT0003, RT0001, RT0002.
+      await sink.onRutaDecaActualizada?.(ruta('RT0001_2026_X', '05/10/2026 12:00:00'));
+      await sink.onRutaDecaActualizada?.(ruta('RT0002_2026_X', '05/10/2026 15:30:10'));
+      await sink.onRutaDecaActualizada?.(ruta('RT0003_2026_X', '05/10/2026 08:15:00'));
+
+      expect(readdirSync(raiz).filter((n) => n !== 'events').sort()).toEqual([
+        '2026-10-05T08-15-00--RT0003_2026_X',
+        '2026-10-05T12-00-00--RT0001_2026_X',
+        '2026-10-05T15-30-10--RT0002_2026_X',
+      ]);
+    } finally {
+      rmSync(raiz, { recursive: true, force: true });
+    }
+  });
+
+  it('una nueva actualizacion de la misma ruta reutiliza SU carpeta (no crea otra ni la renombra)', async () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'watcher-json-'));
+    try {
+      const sink = createJsonFileSink(join(raiz, 'events'), createLogger('error'), undefined, raiz);
+      await sink.onRutaDecaActualizada?.(ruta('RT0001_2026_X', '05/10/2026 12:00:00'));
+      await sink.onRutaDecaActualizada?.({ ...ruta('RT0001_2026_X', '05/10/2026 12:00:00'), consultadoEn: '2026-10-06T09:00:00Z' });
+      expect(readdirSync(raiz).filter((n) => n !== 'events')).toEqual(['2026-10-05T12-00-00--RT0001_2026_X']);
+    } finally {
+      rmSync(raiz, { recursive: true, force: true });
     }
   });
 });
