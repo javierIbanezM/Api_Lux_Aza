@@ -39,6 +39,9 @@ export interface ExpedicionActualizada {
   datosExtra?: Record<string, string>;
   /** Datos de la ruta del pedido (p_expRutas): conductor, DNI, telefono, matriculas, transportista... */
   datosRuta?: Record<string, string>;
+  /** Peligrosidad por referencias (p_manReferenciasADR): 'ADR' / 'LQ' si al menos una referencia del
+   *  pedido lo es, `null` si ninguna. Es la columna `peligrosidad` de la tabla de planificacion. */
+  peligrosidad?: { valor: 'ADR' | 'LQ' | null; referencias: Array<{ referencia: string; descripcion: string; adr: 'ADR' | 'LQ' }> };
   /** Lineas del pedido (p_expPedidoLineas, accion=SELECT). */
   lineas: ExpedicionLinea[];
   /** Contenedores/bultos del pedido (p_expPedidoContenedores, accion=SELECT_INICIO). */

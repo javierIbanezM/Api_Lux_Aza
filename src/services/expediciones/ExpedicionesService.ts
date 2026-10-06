@@ -37,6 +37,15 @@ export interface ExpedicionDetalle {
   datosRuta: Record<string, string> | undefined;
   /** DECA de la ruta (p_expRutasDeca: SELECT y SELECT_ENVIOS). `undefined` si no hay ruta o no se pudo leer. */
   decaRuta: { deca: Array<Record<string, string>>; envios: Array<Record<string, string>> } | undefined;
+  /** Peligrosidad por referencias (p_manReferenciasADR). `undefined` si no se pudo consultar. */
+  peligrosidad: PeligrosidadPedido | undefined;
+}
+
+/** Peligrosidad de un pedido: 'ADR' o 'LQ' si AL MENOS UNA de sus referencias lo es (ADR gana a LQ), si no `null`. */
+export interface PeligrosidadPedido {
+  valor: 'ADR' | 'LQ' | null;
+  /** Solo las referencias del pedido que son ADR o LQ. */
+  referencias: Array<{ referencia: string; descripcion: string; adr: 'ADR' | 'LQ' }>;
 }
 
 export interface CrearExpedicionResult {
@@ -60,6 +69,9 @@ export interface CrearExpedicionResult {
  * src/lux/warehouses.ts para la lista de almacenes validos.
  */
 export class ExpedicionesService {
+  /** Referencias ADR/LQ por almacen (listas pequenas: ~130 en total), cacheadas unos minutos. */
+  private readonly referenciasPeligrosas = new Map<string, { expira: number; datos: Promise<Map<string, 'ADR' | 'LQ'>> }>();
+
   constructor(private readonly luxClient: LuxClient) {}
 
   /**
@@ -172,11 +184,63 @@ export class ExpedicionesService {
     ]);
     const resumenListado = await this.obtenerResumenListadoExpedicion(cabecera.pedido, almacen);
     // Best effort: un fallo al leer la ruta no debe impedir ver el resto del detalle.
-    const [datosRuta, decaRuta] = await Promise.all([
+    const [datosRuta, decaRuta, peligrosidad] = await Promise.all([
       this.obtenerDatosRuta(resumenListado?.ruta, almacen).catch(() => undefined),
       this.obtenerDecaDeRuta(resumenListado?.ruta, almacen).catch(() => undefined),
+      this.calcularPeligrosidad(lineas, cabecera.propietario ?? resumenListado?.propietario, almacen).catch(() => undefined),
     ]);
-    return { cabecera, datosExtra, lineas, contenedores, resumenListado, datosRuta, decaRuta };
+    return { cabecera, datosExtra, lineas, contenedores, resumenListado, datosRuta, decaRuta, peligrosidad };
+  }
+
+  /**
+   * Referencias ADR y LQ de LUX (p_manReferenciasADR, SELECT con adr='ADR' / adr='LQ'). Clave
+   * `propietario|referencia`. Cache de 10 min por almacen; si la carga falla no se cachea el error.
+   */
+  private cargarReferenciasPeligrosas(almacen?: string): Promise<Map<string, 'ADR' | 'LQ'>> {
+    const clave = almacen ?? '';
+    const ahora = Date.now();
+    const cacheada = this.referenciasPeligrosas.get(clave);
+    if (cacheada && cacheada.expira > ahora) {
+      return cacheada.datos;
+    }
+    const datos = (async () => {
+      const mapa = new Map<string, 'ADR' | 'LQ'>();
+      for (const adr of ['LQ', 'ADR'] as const) {
+        const rows: unknown = await this.luxClient.callProc('p_manReferenciasADR', 'SELECT', { adr }, {
+          operacion: 'expediciones.cargarReferenciasPeligrosas',
+          almacen,
+        });
+        for (const r of Array.isArray(rows) ? (rows as Array<Record<string, string>>) : []) {
+          mapa.set(`${r.propietario}|${r.referencia}`, adr); // ADR se carga la ultima: gana a LQ
+        }
+      }
+      return mapa;
+    })();
+    this.referenciasPeligrosas.set(clave, { expira: ahora + 10 * 60_000, datos });
+    datos.catch(() => this.referenciasPeligrosas.delete(clave));
+    return datos;
+  }
+
+  /**
+   * Peligrosidad del pedido: 'ADR' o 'LQ' si al menos una referencia de sus lineas lo es (ADR gana a
+   * LQ); `null` si todas son 'NO APLICA'. La referencia de la linea viene como
+   * `<idArticulo>@tlsi@<codigo>@tlsi@<descripcion>`; el codigo es el 2o trozo.
+   */
+  async calcularPeligrosidad(lineas: ExpedicionLinea[], propietario: string | undefined, almacen?: string): Promise<PeligrosidadPedido> {
+    const mapa = await this.cargarReferenciasPeligrosas(almacen);
+    const referencias: PeligrosidadPedido['referencias'] = [];
+    const vistas = new Set<string>();
+    for (const linea of lineas) {
+      const [, codigoRaw, descripcion] = String(linea.referencia ?? '').split('@tlsi@');
+      const codigo = (codigoRaw ?? String(linea.referencia ?? '')).trim();
+      const adr = mapa.get(`${propietario ?? ''}|${codigo}`);
+      if (adr && !vistas.has(codigo)) {
+        vistas.add(codigo);
+        referencias.push({ referencia: codigo, descripcion: (descripcion ?? '').trim(), adr });
+      }
+    }
+    const valor = referencias.some((r) => r.adr === 'ADR') ? 'ADR' : referencias.length > 0 ? 'LQ' : null;
+    return { valor, referencias };
   }
 
   /** DECA (p_expRutasDeca SELECT) y envios/eventos (SELECT_ENVIOS) de la ruta, por `numeroRuta` exacto.

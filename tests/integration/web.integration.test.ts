@@ -132,6 +132,12 @@ describe('Integracion: interfaz web de almacen (/almacen/*)', () => {
         if (proc === 'p_expRutas') {
           return { status: 200, body: [{ numeroRuta: 'RT9_2026_X', conductorNombre: 'Sascha', conductorDni: '161616', conductorEmail: '', 'action#edit': '0' }] };
         }
+        if (proc === 'p_expPedidoLineas') {
+          return { status: 200, body: [{ id: '1', referencia: '9@tlsi@REF-LQ@tlsi@Aguarras puro' }] };
+        }
+        if (proc === 'p_manReferenciasADR') {
+          return { status: 200, body: body.adr === 'LQ' ? [{ propietario: 'AZA', referencia: 'REF-LQ', descripcion: 'Aguarras puro', adr: 'LQ' }] : [] };
+        }
         if (proc === 'p_expRutasDeca') {
           return body.accion === 'SELECT'
             ? { status: 200, body: [{ shipmentReference: 'RT9_2026_X-AZA', estado: 'ENVIADO', shipmentId: 'SH-1', error: '' }] }
@@ -158,6 +164,9 @@ describe('Integracion: interfaz web de almacen (/almacen/*)', () => {
     expect(r.text).toContain('Sascha');
     expect(r.text).toContain('conductorEmail'); // campo vacio: se muestra igualmente
     expect(r.text).not.toContain('action#edit');
+    expect(r.text).toContain('Peligrosidad (por referencias');
+    expect(r.text).toContain('<strong>LQ</strong>');
+    expect(r.text).toContain('REF-LQ');
     expect(r.text).toContain('DECA de la ruta (p_expRutasDeca) (1)');
     expect(r.text).toContain('SH-1');
     expect(r.text).toContain('Envios del DECA (SELECT_ENVIOS) (0)');

@@ -140,6 +140,15 @@ deploy/instalar-arranque-pm2.ps1 y la parte del README sobre PM2. Llevar el comm
    - p_expRutas oculta las rutas ENVIADA salvo estado=ENVIADA: se consulta primero sin estado y luego con ENVIADA.
    - El listado /almacen/ NO cambia. Reiniciar API: pm2 restart all. Tests: 267 en verde.
 
+5l. PELIGROSIDAD DEL PEDIDO (ADR / LQ)  (SIN COMMIT)
+   - Regla: 'ADR' o 'LQ' si AL MENOS UNA referencia del pedido lo es (ADR gana a LQ); NULL si todas son NO APLICA.
+   - Dato: p_manReferenciasADR (campo adr: NO APLICA / ADR / LQ). Se anade a la whitelist (solo lectura, SELECT).
+     Se cargan una vez las referencias LQ (46) y ADR (87) y se cachean 10 min; la referencia de la linea
+     '<id>@tlsi@<codigo>@tlsi@<desc>' se cruza por codigo + propietario.
+   - Aparece en: detalle web de expedicion (tarjeta 'Peligrosidad'), API /api/expediciones/:id (campo
+     peligrosidad) y JSON del watcher (campo peligrosidad). Tests: 268 en verde.
+   - Requiere reiniciar API y watcher: pm2 restart all
+
 6. DOCS Y OTROS: README.md, informes/mejoras-pendientes.txt, .gitignore (bruno/). La coleccion de
    Bruno (bruno/docuten/) NO se versiona: lleva la clave.
 

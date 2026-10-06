@@ -65,6 +65,32 @@ describe('ExpedicionesService', () => {
     expect(estados).toEqual([undefined, 'ENVIADA']);
   });
 
+  it('calcularPeligrosidad: ADR/LQ si AL MENOS UNA referencia lo es (ADR gana a LQ), NULL si todas son NO APLICA; las listas se cachean', async () => {
+    let llamadasAdr = 0;
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc !== 'p_manReferenciasADR') {
+          return { status: 200, body: [] };
+        }
+        llamadasAdr += 1;
+        expect(body.accion).toBe('SELECT');
+        return body.adr === 'LQ'
+          ? { status: 200, body: [{ propietario: 'CAMELIA', referencia: 'REF-LQ', descripcion: 'Aguarras', adr: 'LQ' }] }
+          : { status: 200, body: [{ propietario: 'CAMELIA', referencia: 'REF-ADR', descripcion: 'Acido', adr: 'ADR' }] };
+      },
+    });
+    const linea = (codigo: string) => ({ referencia: `1@tlsi@${codigo}@tlsi@Descripcion ${codigo}` }) as never;
+
+    expect(await service.calcularPeligrosidad([linea('OTRA'), linea('REF-LQ')], 'CAMELIA', 'SAGUNTO')).toMatchObject({
+      valor: 'LQ',
+      referencias: [{ referencia: 'REF-LQ', adr: 'LQ' }],
+    });
+    expect((await service.calcularPeligrosidad([linea('REF-LQ'), linea('REF-ADR')], 'CAMELIA', 'SAGUNTO')).valor).toBe('ADR');
+    expect(await service.calcularPeligrosidad([linea('OTRA')], 'CAMELIA', 'SAGUNTO')).toEqual({ valor: null, referencias: [] });
+    expect((await service.calcularPeligrosidad([linea('REF-LQ')], 'OTRO-PROPIETARIO', 'SAGUNTO')).valor).toBeNull(); // el propietario cuenta
+    expect(llamadasAdr).toBe(2); // una por tipo (LQ y ADR), cacheadas para las 4 llamadas
+  });
+
   it('obtenerDatosRuta no llama a LUX si no hay ruta o esta "NO ASIGNADA", y tolera el cuerpo vacio de LUX', async () => {
     const llamadas: string[] = [];
     mock.updateOptions({

@@ -31,6 +31,28 @@
   </div>
 <% } %>
 
+<% if (typeof peligrosidad !== 'undefined' && peligrosidad) { %>
+  <div class="card">
+    <h3>Peligrosidad (por referencias, p_manReferenciasADR)</h3>
+    <p><strong><%= peligrosidad.valor || 'Sin peligrosidad (todas las referencias NO APLICA)' %></strong></p>
+    <% if (peligrosidad.referencias.length > 0) { %>
+      <table>
+        <thead><tr><th>referencia</th><th>descripcion</th><th>adr</th></tr></thead>
+        <tbody>
+          <% peligrosidad.referencias.forEach(function(r) { %>
+            <tr><td><%= r.referencia %></td><td><%= r.descripcion %></td><td><%= r.adr %></td></tr>
+          <% }); %>
+        </tbody>
+      </table>
+    <% } %>
+  </div>
+<% } else { %>
+  <div class="card">
+    <h3>Peligrosidad (por referencias, p_manReferenciasADR)</h3>
+    <p>No se pudo calcular.</p>
+  </div>
+<% } %>
+
 <% if (typeof datosRuta === 'undefined' || !datosRuta) { %>
   <div class="card">
     <h3>Datos de la ruta (conductor)</h3>

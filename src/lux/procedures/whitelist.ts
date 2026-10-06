@@ -21,6 +21,10 @@
  * accion SELECT con `numeroRuta` EXACTO, solo lectura. Se usa para completar el detalle de una
  * expedicion con los datos de su ruta (conductorNombre, conductorDni, matriculaTractora...).
  *
+ * `p_manReferenciasADR` (clasificacion ADR de cada referencia: campo `adr` = 'NO APLICA' | 'ADR' | 'LQ'):
+ * solo lectura (SELECT con adr='LQ'/'ADR' para listar las referencias peligrosas). Se usa para saber si
+ * un pedido tiene peligrosidad (al menos una referencia ADR o LQ).
+ *
  * `p_recAlbaranHUPreinformado` es el equivalente de `p_expPedidoContenedores` pero para
  * recepciones (detalle por HU/pallet fisico, no por linea de albaran): confirmado contra el
  * servidor real (accion=SELECT_INICIO, idParent=<idAlbaran>), forma de datos propia (numeroSerie,
@@ -34,6 +38,7 @@ export const PROCEDURE_WHITELIST = [
   'p_expRutasDetalle',
   'p_expRutasDeca',
   'p_expRutas',
+  'p_manReferenciasADR',
   'p_recCabeceraAza',
   'p_recAlbaranLineas',
   'p_recepcionesAza',

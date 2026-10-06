@@ -890,6 +890,10 @@ export class LuxActionWatcher {
       contenedores = contenedoresRes ?? [];
       datosExtra = datosExtraRes ?? {};
     }
+    const propietario = resumen?.propietario ?? cabecera?.propietario;
+    const peligrosidad = lineas.length > 0
+      ? await this.fetchBestEffort(() => this.expedicionesService.calcularPeligrosidad(lineas, propietario, almacen), 'peligrosidad')
+      : undefined;
 
     return {
       idPedido,
@@ -901,6 +905,7 @@ export class LuxActionWatcher {
       listado: resumen,
       datosExtra,
       datosRuta,
+      peligrosidad,
       lineas,
       contenedores,
     };
