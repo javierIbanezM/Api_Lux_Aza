@@ -21,7 +21,7 @@ const ESTADOS_TERMINALES = /^(ANULADO|ERROR)$/i;
 const ENVIO_ENTREGADO = /^delivered$/i;
 const DIA_MS = 24 * 3600_000;
 
-export type MotivoPendiente = 'sin-shipmentId' | 'sin-pdf' | 'seguimiento';
+export type MotivoPendiente = 'sin-shipmentId' | 'sin-pdf' | 'sin-totales' | 'seguimiento';
 
 export interface DecaPendiente {
   carpeta: string;
@@ -38,6 +38,7 @@ interface JsonRutaDeca {
   numeroRuta?: string;
   almacen?: string;
   consultadoEn?: string;
+  numContenedores?: number | null;
   deca?: FilaDeca[];
 }
 
@@ -76,11 +77,20 @@ export async function buscarDecaPendientes(raiz: string, conDocuten: boolean, op
       }
       const datos = JSON.parse(await readFile(join(raiz, carpeta, json), 'utf-8')) as JsonRutaDeca;
       const numeroRuta = (datos.numeroRuta ?? '').trim();
-      const envios = (datos.deca ?? []).filter((d) => !ESTADOS_TERMINALES.test((d.estado ?? '').trim()));
-      if (numeroRuta === '' || envios.length === 0) {
+      if (numeroRuta === '') {
         continue;
       }
       const base = { carpeta, numeroRuta, almacen: datos.almacen };
+      // Carpetas guardadas antes de existir los totales de la ruta (pallets / numContenedores): se rellenan una
+      // vez, tambien las de envios fallidos (ERROR/ANULADO), que por lo demas no se vuelven a mirar.
+      if (datos.numContenedores === undefined) {
+        pendientes.push({ ...base, motivo: 'sin-totales' });
+        continue;
+      }
+      const envios = (datos.deca ?? []).filter((d) => !ESTADOS_TERMINALES.test((d.estado ?? '').trim()));
+      if (envios.length === 0) {
+        continue;
+      }
       const sinId = envios.some((d) => (d.shipmentId ?? '').trim() === '');
       const sinPdf = conDocuten && !ficheros.some((f) => f.toLowerCase().endsWith('.pdf'));
       if (sinId || sinPdf) {

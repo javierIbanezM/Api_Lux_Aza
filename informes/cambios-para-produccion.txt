@@ -175,6 +175,16 @@ deploy/instalar-arranque-pm2.ps1 y la parte del README sobre PM2. Llevar el comm
      Al reiniciar: 90 en seguimiento, 28 con cambio de estado (actualizados). Tests: 284 en verde.
    - Requiere reiniciar el watcher: pm2 restart api-whales-watcher
 
+5o. TOTALES DE LA RUTA EN EL JSON DE watcher-rutas-deca: pallets y numContenedores  (SIN COMMIT)
+   - Cada JSON de ruta lleva ahora `pedidos`, `pallets`, `numContenedores` (suma de los pedidos de la ruta, segun el
+     listado de expediciones: numPalets y numContenedores; la columna `pallets` del listado llega siempre vacia) y
+     `pedidosDetalle` (aporte de cada pedido: id, pedido, propietario, estado, pallets, numContenedores).
+   - Se consulta el listado con la ruta (sin estado y ENVIADO, que LUX oculta por defecto) y se cuentan solo las filas
+     de ESA ruta exacta (el filtro de LUX admite comodines). Si no se pueden calcular se reintenta en la siguiente pasada.
+   - Las carpetas ya existentes (tambien las de envios ERROR/ANULADO) se rellenan solas una vez, al arrancar.
+     Ejemplo real: RT00013840_2026_NTL - VICTRANSA PL = 14 pedidos, 27 pallets, 28 contenedores. Tests: 290 en verde.
+   - Requiere reiniciar el watcher: pm2 restart api-whales-watcher
+
 6. DOCS Y OTROS: README.md, informes/mejoras-pendientes.txt, .gitignore (bruno/). La coleccion de
    Bruno (bruno/docuten/) NO se versiona: lleva la clave.
 

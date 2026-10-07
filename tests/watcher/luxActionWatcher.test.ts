@@ -839,7 +839,7 @@ describe('watcher/LuxActionWatcher', () => {
       mkdirSync(carpeta, { recursive: true });
       writeFileSync(
         join(carpeta, '2026-10-05T10-00-00-000--rutadeca-RT9.json'),
-        JSON.stringify({ numeroRuta: 'RT9_2026_X', almacen: 'SAGUNTO', consultadoEn: '2026-10-05T10:00:00Z', deca, envios: [], descargas: [] }),
+        JSON.stringify({ numeroRuta: 'RT9_2026_X', almacen: 'SAGUNTO', consultadoEn: '2026-10-05T10:00:00Z', numContenedores: 0, deca, envios: [], descargas: [] }),
       );
       if (conPdf) {
         writeFileSync(join(carpeta, 'Porte.pdf'), 'PDF');
@@ -919,6 +919,33 @@ describe('watcher/LuxActionWatcher', () => {
       expect(descargarDocumentos).not.toHaveBeenCalled();
       expect(contador.n).toBe(1); // solo la consulta ligera del estado de RT1 (en seguimiento); RT2 son envios fallidos
       expect(logLines.some((l) => l.operacion === 'watcher.decaPendientes' && l.pendientes === 0 && l.enSeguimiento === 1 && l.conCambioDeEstado === 0)).toBe(true);
+    });
+
+    it('el JSON de la ruta lleva pallets, numContenedores y el detalle por pedido; una carpeta antigua sin totales se rellena al arrancar', async () => {
+      const carpeta = crearCarpeta('2026-10-05T10-00-00--RT9_2026_X', [{ shipmentReference: 'RT9_2026_X-AZA', estado: 'ENVIADO', shipmentStatus: 'delivered', shipmentId: 'S1', fechaCreacion: '05/10/2026 10:00:00' }], true);
+      // simula la carpeta antigua: sin los campos de totales
+      const json = join(carpeta, '2026-10-05T10-00-00-000--rutadeca-RT9.json');
+      writeFileSync(json, JSON.stringify({ numeroRuta: 'RT9_2026_X', almacen: 'SAGUNTO', deca: [{ estado: 'ENVIADO', shipmentStatus: 'delivered', shipmentId: 'S1' }], envios: [], descargas: [] }));
+      mock.updateOptions({
+        onProc: (proc, body) => {
+          if (proc === 'p_expedicionesAza') {
+            return { status: 200, body: [{ id: '1', pedido: 'P1', propietario: 'A', estado: 'ENVIADO', ruta: 'RT9_2026_X', numPalets: '3', numContenedores: '5' }, { id: '2', pedido: 'P2', propietario: 'B', estado: 'ENVIADO', ruta: 'RT9_2026_X', numPalets: '1', numContenedores: '2' }] };
+          }
+          if (proc === 'p_expRutasDeca' && body.accion === 'SELECT') {
+            return { status: 200, body: [{ shipmentReference: 'RT9_2026_X-AZA', estado: 'ENVIADO', shipmentStatus: 'delivered', shipmentId: 'S1', fechaCreacion: '05/10/2026 10:00:00' }] };
+          }
+          return { status: 200, body: [] };
+        },
+      });
+      const onRutaDecaActualizada = vi.fn();
+
+      arrancarConDocuten(onRutaDecaActualizada, vi.fn(async (id: string) => ok(id)));
+
+      await waitUntil(() => onRutaDecaActualizada.mock.calls.length > 0, 8000);
+      const r = onRutaDecaActualizada.mock.calls[0]?.[0];
+      expect(r).toMatchObject({ numeroRuta: 'RT9_2026_X', pedidos: 2, pallets: 4, numContenedores: 7 });
+      expect(r.pedidosDetalle.map((d: { pedido: string }) => d.pedido).sort()).toEqual(['P1', 'P2']);
+      expect(logLines.some((l) => l.operacion === 'watcher.decaPendientes' && l.sinTotales === 1)).toBe(true);
     });
 
     it('SEGUIMIENTO: un DECA completo que pasa de ENVIADO a FIRMADO vuelve a descargar el PDF (con la firma) y lo entrega al sink', async () => {

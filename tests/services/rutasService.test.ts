@@ -19,6 +19,53 @@ function crear(opts: {
 }
 
 describe('services/RutasService', () => {
+  it('obtenerTotalesRuta suma numPalets y numContenedores de los pedidos de la ruta (sin estado + ENVIADO), solo los de ESA ruta exacta', async () => {
+    const { servicio, listarExpediciones } = crear({
+      listar: (f) =>
+        f.estado === 'ENVIADO'
+          ? [
+              { id: '2', pedido: 'P2', propietario: 'B', estado: 'ENVIADO', ruta: 'RT1_2026_X', numPalets: '4', pallets: '', numContenedores: '6' },
+              { id: '9', pedido: 'P9', propietario: 'C', estado: 'ENVIADO', ruta: 'RT1-2026-X', numPalets: '9', pallets: '', numContenedores: '9' }, // `_` como comodin: otra ruta
+            ]
+          : [
+              { id: '1', pedido: 'P1', propietario: 'A', estado: 'ASIGNADO', ruta: 'rt1_2026_x ', numPalets: '2', numContenedores: '2' },
+              { id: '3', pedido: 'P3', propietario: 'A', estado: 'ASIGNADO', ruta: 'RT1_2026_X', numPalets: '', numContenedores: '' }, // vacios: cuentan 0
+            ],
+    });
+
+    const t = await servicio.obtenerTotalesRuta('RT1_2026_X', 'SAGUNTO');
+
+    expect(t).toMatchObject({ pedidos: 3, pallets: 6, numContenedores: 8 });
+    expect(t.detalle.map((d) => d.pedido).sort()).toEqual(['P1', 'P2', 'P3']);
+    expect(listarExpediciones).toHaveBeenCalledWith({ ruta: 'RT1_2026_X' }, 'SAGUNTO');
+    expect(listarExpediciones).toHaveBeenCalledWith({ ruta: 'RT1_2026_X', estado: 'ENVIADO' }, 'SAGUNTO');
+  });
+
+  it('una ruta sin pedidos da totales a 0 (no undefined): asi no se reconsulta eternamente', async () => {
+    const { servicio } = crear({});
+    expect(await servicio.obtenerTotalesRuta('RT0_2026_X')).toMatchObject({ pedidos: 0, pallets: 0, numContenedores: 0, detalle: [] });
+  });
+
+  it('consultarDeca incluye los totales de la ruta, y si fallan consultarDeca sigue funcionando (totales undefined)', async () => {
+    let falla = false;
+    const { servicio } = crear({
+      listar: (f) => {
+        if (falla && f.estado === 'ENVIADO') {
+          throw new Error('LUX caido');
+        }
+        return [{ id: '1', pedido: 'P1', propietario: 'A', estado: 'ENVIADO', ruta: 'RT1_2026_X', numPalets: '3', numContenedores: '5' }];
+      },
+      proc: (_p, accion) => (accion === 'SELECT' ? [{ shipmentReference: 'RT1_2026_X-AZA', estado: 'ENVIADO', shipmentId: 'S' }] : []),
+    });
+    const [ok] = await servicio.consultarDeca('%RT1_2026_X%', 'SAGUNTO');
+    expect(ok?.totales).toMatchObject({ pallets: 3, numContenedores: 5 });
+
+    falla = true;
+    const [sinTotales] = await servicio.consultarDeca('%RT1_2026_X%', 'SAGUNTO');
+    expect(sinTotales?.totales).toBeUndefined();
+    expect(sinTotales?.deca).toHaveLength(1);
+  });
+
   it('numeroRutaDe quita el sufijo -AZA / -PROP de la referencia del envio', () => {
     expect(numeroRutaDe('RT00013659_2026_COMPARTIDO-PROP', '1')).toBe('RT00013659_2026_COMPARTIDO');
     expect(numeroRutaDe('RT00013615_2026_COMP MAMENTRANS007 S.L. -AZA', '1')).toBe('RT00013615_2026_COMP MAMENTRANS007 S.L.');

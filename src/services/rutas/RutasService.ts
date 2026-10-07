@@ -12,11 +12,25 @@ export interface ResolucionRuta {
   llamadas: LlamadaApi[];
 }
 
+/** Totales de lo que lleva una ruta: suma de los pedidos asignados (filas del listado de expediciones). */
+export interface TotalesRuta {
+  /** Pedidos de la ruta. */
+  pedidos: number;
+  /** Suma de `numPalets` de sus pedidos (la columna `pallets` del listado llega siempre vacia). */
+  pallets: number;
+  /** Suma de `numContenedores` de sus pedidos. */
+  numContenedores: number;
+  /** Aporte de cada pedido, para poder comprobar los totales. */
+  detalle: Array<{ id: string; pedido: string; propietario: string; estado: string; pallets: number; numContenedores: number }>;
+}
+
 /** Resultado de consultar el DECA de una ruta concreta (nombre exacto de la ruta). */
 export interface RutaDecaConsulta {
   numeroRuta: string;
   deca: RutaDeca[];
   envios: RutaDecaEnvio[];
+  /** Totales de la ruta (pallets y contenedores). `undefined` si no se pudieron calcular (se reintenta). */
+  totales?: TotalesRuta;
   /** La consulta hecha a la API para obtener estos datos (para dejarla junto a ellos). */
   consulta: {
     filtroLog: string;
@@ -60,6 +74,43 @@ export class RutasService {
       almacen,
     });
     return comoFilas<RutaDeca>(rows);
+  }
+
+  /**
+   * Totales de pallets y contenedores de una ruta: suma sobre los pedidos que lleva (listado de expediciones
+   * filtrado por la ruta). Se piden las dos vistas (sin estado y estado=ENVIADO, porque LUX oculta por defecto
+   * los pedidos enviados) y se queda con las filas cuya ruta es EXACTAMENTE la pedida (el filtro de LUX admite
+   * comodines y `_` coincide con cualquier caracter).
+   */
+  async obtenerTotalesRuta(numeroRuta: string, almacen?: string): Promise<TotalesRuta> {
+    const nombre = numeroRuta.trim().toUpperCase();
+    const filas = new Map<string, Record<string, string>>();
+    for (const extra of [{}, { estado: 'ENVIADO' }] as Array<Record<string, string>>) {
+      const rows = (await this.expedicionesService.listarExpediciones({ ruta: numeroRuta, ...extra }, almacen)) as Array<Record<string, string>>;
+      for (const r of rows) {
+        if ((r.ruta ?? '').trim().toUpperCase() === nombre) {
+          filas.set(r.id ?? `${r.pedido}|${r.propietario}`, r);
+        }
+      }
+    }
+    const entero = (v: string | undefined): number => {
+      const n = Number.parseInt((v ?? '').trim(), 10);
+      return Number.isNaN(n) ? 0 : n;
+    };
+    const detalle = [...filas.values()].map((r) => ({
+      id: r.id ?? '',
+      pedido: r.pedido ?? '',
+      propietario: r.propietario ?? '',
+      estado: r.estado ?? '',
+      pallets: entero(r.numPalets) || entero(r.pallets),
+      numContenedores: entero(r.numContenedores),
+    }));
+    return {
+      pedidos: detalle.length,
+      pallets: detalle.reduce((a, d) => a + d.pallets, 0),
+      numContenedores: detalle.reduce((a, d) => a + d.numContenedores, 0),
+      detalle,
+    };
   }
 
   /** Eventos/envios de una ruta (p_expRutasDeca, accion=SELECT_ENVIOS) por `numeroRuta` exacto. */
@@ -132,10 +183,12 @@ export class RutasService {
     for (let intento = 0; intento <= reintentos; intento += 1) {
       const [deca, envios] = await Promise.all([llamar('SELECT'), llamar('SELECT_ENVIOS')]);
       if (deca.filas.length > 0 || envios.filas.length > 0) {
+        const numeroRuta = numeroRutaDe(deca.filas[0]?.shipmentReference, idRuta);
         return {
-          numeroRuta: numeroRutaDe(deca.filas[0]?.shipmentReference, idRuta),
+          numeroRuta,
           deca: deca.filas as RutaDeca[],
           envios: envios.filas as RutaDecaEnvio[],
+          totales: await this.obtenerTotalesRuta(numeroRuta, almacen).catch(() => undefined),
           consulta: { filtroLog: `GENERAR_DECA id=${idRuta}`, metodoResolucion: 'id-ruta', llamadas: [deca.llamada, envios.llamada] },
         };
       }
@@ -159,6 +212,7 @@ export class RutasService {
         numeroRuta,
         deca,
         envios,
+        totales: await this.obtenerTotalesRuta(numeroRuta, almacen).catch(() => undefined),
         consulta: {
           filtroLog: filtro,
           metodoResolucion: resolucion.metodo,

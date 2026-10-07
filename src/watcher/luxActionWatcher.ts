@@ -278,6 +278,7 @@ export class LuxActionWatcher {
           pendientes: incompletos.length,
           sinShipmentId: incompletos.filter((p) => p.motivo === 'sin-shipmentId').length,
           sinPdf: incompletos.filter((p) => p.motivo === 'sin-pdf').length,
+          sinTotales: incompletos.filter((p) => p.motivo === 'sin-totales').length,
           enSeguimiento: seguimiento.length,
           conCambioDeEstado: aRefrescar.length - incompletos.length,
         });
@@ -873,6 +874,10 @@ export class LuxActionWatcher {
           consulta: c.consulta,
           deca: c.deca,
           envios: c.envios,
+          pedidos: c.totales?.pedidos,
+          pallets: c.totales?.pallets,
+          numContenedores: c.totales?.numContenedores,
+          pedidosDetalle: c.totales?.detalle,
           descargas,
         }),
       'ruta',

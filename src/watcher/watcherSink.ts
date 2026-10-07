@@ -96,6 +96,12 @@ export interface RutaDecaActualizada {
   deca: RutaDeca[];
   /** p_expRutasDeca accion=SELECT_ENVIOS. */
   envios: RutaDecaEnvio[];
+  /** Pedidos que lleva la ruta y total de `pallets` y `numContenedores` (suma del listado de expediciones). */
+  pedidos?: number;
+  pallets?: number;
+  numContenedores?: number;
+  /** Aporte de cada pedido de la ruta a esos totales. */
+  pedidosDetalle?: Array<{ id: string; pedido: string; propietario: string; estado: string; pallets: number; numContenedores: number }>;
   /** Descargas de documentos en Docuten (2 por envio: include=all y simple). Vacio si no hay
    *  clave de Docuten configurada o el DECA no tiene shipmentId. Llevan el contenido (`datos`);
    *  el sink guarda los ficheros y deja solo los metadatos en el JSON. */

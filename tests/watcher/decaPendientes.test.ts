@@ -16,7 +16,7 @@ describe('watcher/decaPendientes', () => {
     mkdirSync(dir);
     // el ULTIMO json (por nombre) es el que cuenta
     for (const j of extra.json ?? ['2026-10-05T10-00-00-000--rutadeca-X.json']) {
-      writeFileSync(join(dir, j), JSON.stringify({ numeroRuta: `RUTA-${nombre}`, almacen: 'SAGUNTO', deca }));
+      writeFileSync(join(dir, j), JSON.stringify({ numeroRuta: `RUTA-${nombre}`, almacen: 'SAGUNTO', numContenedores: 0, deca }));
     }
     if (extra.pdf) {
       writeFileSync(join(dir, 'Porte.pdf'), 'PDF');
@@ -54,9 +54,29 @@ describe('watcher/decaPendientes', () => {
   it('usa el JSON MAS RECIENTE de la carpeta: si ya esta completo, no es pendiente', async () => {
     const dir = join(raiz, 'r');
     mkdirSync(dir);
-    writeFileSync(join(dir, '2026-10-05T10-00-00-000--rutadeca-X.json'), JSON.stringify({ numeroRuta: 'R', deca: [{ estado: 'PENDIENTE ENVIO', shipmentId: '' }] }));
-    writeFileSync(join(dir, '2026-10-05T10-05-00-000--rutadeca-X.json'), JSON.stringify({ numeroRuta: 'R', deca: [{ estado: 'FIRMADO', shipmentStatus: 'delivered', shipmentId: 'S1' }] }));
+    writeFileSync(join(dir, '2026-10-05T10-00-00-000--rutadeca-X.json'), JSON.stringify({ numeroRuta: 'R', numContenedores: 0, deca: [{ estado: 'PENDIENTE ENVIO', shipmentId: '' }] }));
+    writeFileSync(join(dir, '2026-10-05T10-05-00-000--rutadeca-X.json'), JSON.stringify({ numeroRuta: 'R', numContenedores: 0, deca: [{ estado: 'FIRMADO', shipmentStatus: 'delivered', shipmentId: 'S1' }] }));
     writeFileSync(join(dir, 'Porte.pdf'), 'PDF');
+    expect(await buscarDecaPendientes(raiz, true)).toEqual([]);
+  });
+
+  it('una carpeta guardada ANTES de existir los totales de la ruta (sin numContenedores) se marca para rellenarlos una vez', async () => {
+    const dir = join(raiz, 'vieja');
+    mkdirSync(dir);
+    writeFileSync(join(dir, '2026-10-05T10-00-00-000--rutadeca-X.json'), JSON.stringify({ numeroRuta: 'R', deca: [{ estado: 'FIRMADO', shipmentStatus: 'delivered', shipmentId: 'S1' }] }));
+    writeFileSync(join(dir, 'Porte.pdf'), 'PDF');
+    expect((await buscarDecaPendientes(raiz, true)).map((p) => [p.carpeta, p.motivo])).toEqual([['vieja', 'sin-totales']]);
+    // con los totales (aunque sean 0 o null) ya no lo es
+    writeFileSync(join(dir, '2026-10-05T10-05-00-000--rutadeca-X.json'), JSON.stringify({ numeroRuta: 'R', numContenedores: 0, deca: [{ estado: 'FIRMADO', shipmentStatus: 'delivered', shipmentId: 'S1' }] }));
+    expect(await buscarDecaPendientes(raiz, true)).toEqual([]);
+  });
+
+  it('las carpetas sin totales se rellenan tambien cuando TODOS sus envios son ERROR/ANULADO (el resto de esas carpetas no se vuelve a mirar)', async () => {
+    const dir = join(raiz, 'fallida');
+    mkdirSync(dir);
+    writeFileSync(join(dir, '2026-10-05T10-00-00-000--rutadeca-X.json'), JSON.stringify({ numeroRuta: 'R', deca: [{ estado: 'ANULADO', shipmentId: '' }, { estado: 'ERROR', shipmentId: '' }] }));
+    expect((await buscarDecaPendientes(raiz, true)).map((p) => p.motivo)).toEqual(['sin-totales']);
+    writeFileSync(join(dir, '2026-10-05T10-05-00-000--rutadeca-X.json'), JSON.stringify({ numeroRuta: 'R', numContenedores: 0, deca: [{ estado: 'ANULADO', shipmentId: '' }, { estado: 'ERROR', shipmentId: '' }] }));
     expect(await buscarDecaPendientes(raiz, true)).toEqual([]);
   });
 
