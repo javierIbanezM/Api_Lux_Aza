@@ -163,6 +163,18 @@ deploy/instalar-arranque-pm2.ps1 y la parte del README sobre PM2. Llevar el comm
      Resultado desde 05/10 14:00: 861 pedidos/albaranes, 855 OK, 5 recientes en cola, 1 sin JSON (43360).
    - Tests: 280 en verde. Reiniciar API y watcher: pm2 restart all
 
+5n. SEGUIMIENTO DEL DECA HASTA LA ENTREGA: PDF FIRMADO  (SIN COMMIT)
+   - Problema: una carpeta de watcher-rutas-deca con envio y PDF se daba por terminada; cuando Docuten firma
+     (ENVIADO/created -> FIRMADO/ready_for_pickup -> pending_delivery -> delivered) el PDF cambia (p.ej. 212 KB ->
+     542 KB con la firma) SIN dejar ningun evento en los logs de LUX, asi que la carpeta se quedaba con el PDF sin firma.
+   - Ahora, al arrancar y cada WATCHER_DECA_PENDIENTES_MS (10 min), los DECA completos cuyo envio NO esta entregado
+     (shipmentStatus distinto de delivered) y tienen menos de WATCHER_DECA_SEGUIMIENTO_DIAS (14) dias se comparan con
+     LUX (1 llamada ligera por ruta: estado, shipmentStatus, documentStatus, fechaEnvio, shipmentId). Si cambio algo
+     se vuelve a descargar, el PDF se reemplaza por el firmado y el JSON se actualiza. Los entregados dejan de mirarse.
+   - Comprobado en real: RT00013701_2026_GRUPAJE paso de PDF 212.089 B / ENVIADO a PDF 542.568 B / FIRMADO.
+     Al reiniciar: 90 en seguimiento, 28 con cambio de estado (actualizados). Tests: 284 en verde.
+   - Requiere reiniciar el watcher: pm2 restart api-whales-watcher
+
 6. DOCS Y OTROS: README.md, informes/mejoras-pendientes.txt, .gitignore (bruno/). La coleccion de
    Bruno (bruno/docuten/) NO se versiona: lleva la clave.
 

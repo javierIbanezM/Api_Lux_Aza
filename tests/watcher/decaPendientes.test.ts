@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { buscarDecaPendientes } from '../../src/watcher/decaPendientes';
+import { buscarDecaPendientes, firmaDeca } from '../../src/watcher/decaPendientes';
 
 describe('watcher/decaPendientes', () => {
   let raiz: string;
@@ -26,7 +26,7 @@ describe('watcher/decaPendientes', () => {
   it('detecta envios sin shipmentId y envios con shipmentId pero sin PDF (si hay Docuten)', async () => {
     carpeta('a', [{ estado: 'PENDIENTE ENVIO', shipmentId: '' }]);
     carpeta('b', [{ estado: 'ENVIADO', shipmentId: 'S1' }]);
-    carpeta('c', [{ estado: 'ENVIADO', shipmentId: 'S2' }], { pdf: true });
+    carpeta('c', [{ estado: 'FIRMADO', shipmentStatus: 'delivered', shipmentId: 'S2' }], { pdf: true });
 
     const r = await buscarDecaPendientes(raiz, true);
 
@@ -55,9 +55,37 @@ describe('watcher/decaPendientes', () => {
     const dir = join(raiz, 'r');
     mkdirSync(dir);
     writeFileSync(join(dir, '2026-10-05T10-00-00-000--rutadeca-X.json'), JSON.stringify({ numeroRuta: 'R', deca: [{ estado: 'PENDIENTE ENVIO', shipmentId: '' }] }));
-    writeFileSync(join(dir, '2026-10-05T10-05-00-000--rutadeca-X.json'), JSON.stringify({ numeroRuta: 'R', deca: [{ estado: 'ENVIADO', shipmentId: 'S1' }] }));
+    writeFileSync(join(dir, '2026-10-05T10-05-00-000--rutadeca-X.json'), JSON.stringify({ numeroRuta: 'R', deca: [{ estado: 'FIRMADO', shipmentStatus: 'delivered', shipmentId: 'S1' }] }));
     writeFileSync(join(dir, 'Porte.pdf'), 'PDF');
     expect(await buscarDecaPendientes(raiz, true)).toEqual([]);
+  });
+
+  describe('seguimiento de DECA completos hasta que el envio este entregado', () => {
+    const ahora = new Date(2026, 9, 7, 13, 0, 0).getTime();
+    const fila = (shipmentStatus: string, estado = 'FIRMADO', fechaCreacion = '07/10/2026 12:00:00') => ({ estado, shipmentStatus, documentStatus: 'pending', shipmentId: 'S1', fechaCreacion, fechaEnvio: '07/10/2026 12:01:00' });
+
+    it('un DECA completo (shipmentId + PDF) que NO esta entregado queda en seguimiento, con la firma de su estado', async () => {
+      carpeta('a', [fila('created', 'ENVIADO')], { pdf: true });
+      carpeta('b', [fila('pending_delivery')], { pdf: true });
+      const r = await buscarDecaPendientes(raiz, true, { ahora });
+      expect(r.map((p) => [p.carpeta, p.motivo])).toEqual([['a', 'seguimiento'], ['b', 'seguimiento']]);
+      expect(r[1]?.firma).toBe(firmaDeca([fila('pending_delivery')]));
+      expect(firmaDeca([fila('ready_for_pickup')])).not.toBe(firmaDeca([fila('pending_delivery')])); // un cambio de estado cambia la firma
+    });
+
+    it('deja de seguirse al ENTREGARSE (delivered), si es antiguo o sin Docuten', async () => {
+      carpeta('entregado', [fila('delivered')], { pdf: true });
+      carpeta('viejo', [fila('created', 'ENVIADO', '01/09/2026 12:00:00')], { pdf: true });
+      carpeta('reciente', [fila('created', 'ENVIADO')], { pdf: true });
+      expect((await buscarDecaPendientes(raiz, true, { ahora })).map((p) => p.carpeta)).toEqual(['reciente']);
+      expect(await buscarDecaPendientes(raiz, false, { ahora })).toEqual([]); // sin Docuten no hay PDF que actualizar
+      expect((await buscarDecaPendientes(raiz, true, { ahora, seguimientoDias: 60 })).map((p) => p.carpeta)).toEqual(['reciente', 'viejo']);
+    });
+
+    it('un DECA incompleto sigue siendo incompleto (no seguimiento)', async () => {
+      carpeta('a', [{ estado: 'PENDIENTE ENVIO', shipmentId: '' }]);
+      expect((await buscarDecaPendientes(raiz, true, { ahora })).map((p) => p.motivo)).toEqual(['sin-shipmentId']);
+    });
   });
 
   it('una carpeta raiz que no existe no da error', async () => {

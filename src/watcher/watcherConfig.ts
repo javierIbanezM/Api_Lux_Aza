@@ -29,6 +29,9 @@ export interface WatcherConfig {
   /** Cada cuanto se vuelven a revisar las carpetas de `watcher-rutas-deca` incompletas (envio sin
    *  shipmentId o sin PDF descargado), ademas de en cada arranque. Por defecto 10 min. */
   decaPendientesMs: number;
+  /** Dias, desde la creacion del DECA, durante los que se sigue su estado (ENVIADO -> FIRMADO -> entregado)
+   *  para actualizar el PDF cuando Docuten lo firma. Por defecto 14. */
+  decaSeguimientoDias: number;
   /** Carpeta donde se guarda un JSON por evento (ver src/watcher/jsonFileSink.ts), solucion
    *  provisional mientras se define el destino definitivo (paso 3, ver watcherSink.ts). */
   jsonEventsDir: string;
@@ -113,6 +116,7 @@ export function loadWatcherConfig(raw: NodeJS.ProcessEnv = process.env): Watcher
     decaRecheckMs: optionalInt('WATCHER_DECA_RECHECK_MS', raw, 15000),
     decaRecheckMax: optionalInt('WATCHER_DECA_RECHECK_MAX', raw, 20),
     decaPendientesMs: optionalInt('WATCHER_DECA_PENDIENTES_MS', raw, 600_000),
+    decaSeguimientoDias: optionalInt('WATCHER_DECA_SEGUIMIENTO_DIAS', raw, 14),
     jsonEventsDir: optionalString('WATCHER_JSON_DIR', raw, 'data/watcher-events'),
     rutasDecaDir: optionalString('WATCHER_RUTAS_DECA_DIR', raw, 'data/watcher-rutas-deca'),
     revisarFicherosDeca: optionalInt('WATCHER_REVISAR_FICHEROS_DECA', raw, 3),

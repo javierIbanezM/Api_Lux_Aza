@@ -47,6 +47,7 @@ describe('watcher/LuxActionWatcher', () => {
     decaRecheckMs: 60,
     decaRecheckMax: 20,
     decaPendientesMs: 600_000,
+    decaSeguimientoDias: 14,
     stateDir: '',
     rutasDecaDir: '',
     revisarFicherosDeca: 3,
@@ -903,7 +904,7 @@ describe('watcher/LuxActionWatcher', () => {
       expect(logLines.some((l) => l.operacion === 'watcher.decaPendientes' && l.sinPdf === 1)).toBe(true);
     });
 
-    it('una carpeta completa (envio con shipmentId y PDF) o con envios fallidos (ERROR/ANULADO) NO se re-consulta', async () => {
+    it('una carpeta completa SIN cambios de estado, entregada, o con envios fallidos (ERROR/ANULADO) NO se vuelve a descargar', async () => {
       crearCarpeta('2026-10-05T10-00-00--RT1_2026_X', [{ estado: 'ENVIADO', shipmentId: 'S1' }], true);
       crearCarpeta('2026-10-05T11-00-00--RT2_2026_X', [{ estado: 'ERROR', shipmentId: '' }, { estado: 'ANULADO', shipmentId: '' }]);
       const contador = { n: 0 };
@@ -915,8 +916,33 @@ describe('watcher/LuxActionWatcher', () => {
       await new Promise((r) => setTimeout(r, 800));
 
       expect(onRutaDecaActualizada).not.toHaveBeenCalled();
-      expect(contador.n).toBe(0);
-      expect(logLines.some((l) => l.operacion === 'watcher.decaPendientes' && l.pendientes === 0)).toBe(true);
+      expect(descargarDocumentos).not.toHaveBeenCalled();
+      expect(contador.n).toBe(1); // solo la consulta ligera del estado de RT1 (en seguimiento); RT2 son envios fallidos
+      expect(logLines.some((l) => l.operacion === 'watcher.decaPendientes' && l.pendientes === 0 && l.enSeguimiento === 1 && l.conCambioDeEstado === 0)).toBe(true);
+    });
+
+    it('SEGUIMIENTO: un DECA completo que pasa de ENVIADO a FIRMADO vuelve a descargar el PDF (con la firma) y lo entrega al sink', async () => {
+      crearCarpeta('2026-10-05T10-00-00--RT9_2026_X', [{ shipmentReference: 'RT9_2026_X-AZA', estado: 'ENVIADO', shipmentStatus: 'created', documentStatus: 'pending', shipmentId: 'SHIP-5' }], true);
+      mock.updateOptions({
+        onProc: (proc, body) => {
+          if (proc === 'p_expedicionesAza') {
+            return { status: 200, body: [{ id: '1', pedido: 'P1', estado: 'ENVIADO', ruta: 'RT9_2026_X' }] };
+          }
+          if (proc === 'p_expRutasDeca' && body.accion === 'SELECT') {
+            return { status: 200, body: [{ shipmentReference: 'RT9_2026_X-AZA', estado: 'FIRMADO', shipmentStatus: 'ready_for_pickup', documentStatus: 'pending', shipmentId: 'SHIP-5', fechaCreacion: '05/10/2026 10:00:00' }] };
+          }
+          return { status: 200, body: [] };
+        },
+      });
+      const onRutaDecaActualizada = vi.fn();
+      const descargarDocumentos = vi.fn(async (id: string) => ok(id));
+
+      arrancarConDocuten(onRutaDecaActualizada, descargarDocumentos);
+
+      await waitUntil(() => onRutaDecaActualizada.mock.calls.length > 0, 8000);
+      expect(descargarDocumentos).toHaveBeenCalledWith('SHIP-5');
+      expect(onRutaDecaActualizada.mock.calls[0]?.[0].deca[0].estado).toBe('FIRMADO');
+      expect(logLines.some((l) => l.operacion === 'watcher.decaPendientes' && l.enSeguimiento === 1 && l.conCambioDeEstado === 1)).toBe(true);
     });
   });
 

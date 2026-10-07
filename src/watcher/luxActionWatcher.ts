@@ -12,7 +12,7 @@ import { limpiarFiltroRuta } from '../services/rutas';
 import { LuxAuthError, LuxHttpError, LuxNetworkError } from '../lux/errors';
 import type { Expedicion, ExpedicionContenedor, ExpedicionLinea, Recepcion, RecepcionHU, RecepcionLinea } from '../lux/models';
 import { LogTailer } from './logTailer';
-import { buscarDecaPendientes } from './decaPendientes';
+import { buscarDecaPendientes, firmaDeca } from './decaPendientes';
 import { matchActionLine, type ActionEventType, type DetectedEvent } from './actionPatterns';
 import { parseLogTime } from './logTime';
 import { RutasProcesadas } from './rutasProcesadas';
@@ -246,18 +246,43 @@ export class LuxActionWatcher {
       this.arranqueEnCurso += 1;
     }
     try {
-      const pendientes = await buscarDecaPendientes(this.config.rutasDecaDir, this.docutenClient !== undefined);
-      if (pendientes.length > 0 || origen === 'arranque') {
-        this.logger.info('Revision de DECA incompletos en watcher-rutas-deca', {
+      const todos = await buscarDecaPendientes(this.config.rutasDecaDir, this.docutenClient !== undefined, {
+        seguimientoDias: this.config.decaSeguimientoDias,
+      });
+      const incompletos = todos.filter((p) => p.motivo !== 'seguimiento');
+      const seguimiento = todos.filter((p) => p.motivo === 'seguimiento');
+
+      // 1) Incompletos (sin shipmentId o sin PDF): se re-consultan siempre.
+      const aRefrescar = [...incompletos];
+      // 2) En seguimiento (DECA completo, envio aun no entregado): Docuten actualiza el PDF al firmarse y al
+      //    entregarse sin dejar rastro en los logs de LUX. Se compara el estado actual del DECA (1 llamada
+      //    ligera por ruta) con el guardado y solo si cambio se vuelve a descargar todo.
+      for (const p of seguimiento) {
+        if (this.parado) {
+          break;
+        }
+        try {
+          const filas = await this.rutasService.obtenerDeca(p.numeroRuta, p.almacen);
+          if (filas.length > 0 && firmaDeca(filas) !== p.firma) {
+            aRefrescar.push(p);
+          }
+        } catch {
+          // LUX no responde: se vuelve a mirar en la siguiente pasada
+        }
+      }
+      if (aRefrescar.length > 0 || origen === 'arranque') {
+        this.logger.info('Revision de DECA en watcher-rutas-deca', {
           operacion: 'watcher.decaPendientes',
           resultado: 'OK',
           origen,
-          pendientes: pendientes.length,
-          sinShipmentId: pendientes.filter((p) => p.motivo === 'sin-shipmentId').length,
-          sinPdf: pendientes.filter((p) => p.motivo === 'sin-pdf').length,
+          pendientes: incompletos.length,
+          sinShipmentId: incompletos.filter((p) => p.motivo === 'sin-shipmentId').length,
+          sinPdf: incompletos.filter((p) => p.motivo === 'sin-pdf').length,
+          enSeguimiento: seguimiento.length,
+          conCambioDeEstado: aRefrescar.length - incompletos.length,
         });
       }
-      for (const p of pendientes) {
+      for (const p of aRefrescar) {
         if (this.parado) {
           break;
         }
