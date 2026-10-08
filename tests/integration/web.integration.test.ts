@@ -169,7 +169,7 @@ describe('Integracion: interfaz web de almacen (/almacen/*)', () => {
     expect(r.text).toContain('REF-LQ');
     expect(r.text).toContain('DECA de la ruta (p_expRutasDeca) (1)');
     expect(r.text).toContain('SH-1');
-    expect(r.text).toContain('Envios del DECA (SELECT_ENVIOS) (0)');
+    expect(r.text).not.toContain('SELECT_ENVIOS'); // esa accion falla en LUX y ya no se consulta
     expect(r.text).toContain('<th>campoRaro</th>'); // todos los campos de los contenedores, vengan en la fila que vengan
   });
 

@@ -113,7 +113,11 @@ export class RutasService {
     };
   }
 
-  /** Eventos/envios de una ruta (p_expRutasDeca, accion=SELECT_ENVIOS) por `numeroRuta` exacto. */
+  /**
+   * Eventos/envios de una ruta (p_expRutasDeca, accion=SELECT_ENVIOS). NO se llama desde ningun flujo: en cada
+   * llamada LUX falla con 'Error al convertir una cadena de caracteres en fecha y/u hora' (queda un SEVERE en
+   * lux.log por cada consulta) y devuelve cuerpo vacio, incluso para rutas que no existen. Solo para diagnostico.
+   */
   async obtenerEnvios(numeroRuta: string, almacen?: string): Promise<RutaDecaEnvio[]> {
     const rows = await this.luxClient.callProc('p_expRutasDeca', 'SELECT_ENVIOS', { numeroRuta }, {
       operacion: 'rutas.obtenerEnvios',
@@ -172,24 +176,24 @@ export class RutasService {
     esperaMs: number = 3000,
     reintentos: number = 2,
   ): Promise<RutaDecaConsulta | undefined> {
-    const llamar = async (accion: 'SELECT' | 'SELECT_ENVIOS'): Promise<{ filas: Array<Record<string, string>>; llamada: LlamadaApi }> => {
-      const rows = await this.luxClient.callProc('p_expRutasDeca', accion, { id: idRuta }, {
-        operacion: `rutas.${accion === 'SELECT' ? 'obtenerDeca' : 'obtenerEnvios'}PorId`,
+    const llamar = async (): Promise<{ filas: Array<Record<string, string>>; llamada: LlamadaApi }> => {
+      const rows = await this.luxClient.callProc('p_expRutasDeca', 'SELECT', { id: idRuta }, {
+        operacion: 'rutas.obtenerDecaPorId',
         almacen,
       });
       const filas = comoFilas<Record<string, string>>(rows);
-      return { filas, llamada: { procedimiento: 'p_expRutasDeca', accion, parametros: { id: idRuta }, almacen, filas: filas.length } };
+      return { filas, llamada: { procedimiento: 'p_expRutasDeca', accion: 'SELECT', parametros: { id: idRuta }, almacen, filas: filas.length } };
     };
     for (let intento = 0; intento <= reintentos; intento += 1) {
-      const [deca, envios] = await Promise.all([llamar('SELECT'), llamar('SELECT_ENVIOS')]);
-      if (deca.filas.length > 0 || envios.filas.length > 0) {
+      const deca = await llamar();
+      if (deca.filas.length > 0) {
         const numeroRuta = numeroRutaDe(deca.filas[0]?.shipmentReference, idRuta);
         return {
           numeroRuta,
           deca: deca.filas as RutaDeca[],
-          envios: envios.filas as RutaDecaEnvio[],
+          envios: [],
           totales: await this.obtenerTotalesRuta(numeroRuta, almacen).catch(() => undefined),
-          consulta: { filtroLog: `GENERAR_DECA id=${idRuta}`, metodoResolucion: 'id-ruta', llamadas: [deca.llamada, envios.llamada] },
+          consulta: { filtroLog: `GENERAR_DECA id=${idRuta}`, metodoResolucion: 'id-ruta', llamadas: [deca.llamada] },
         };
       }
       if (intento < reintentos) {
@@ -199,19 +203,16 @@ export class RutasService {
     return undefined;
   }
 
-  /** Resuelve el filtro y consulta SELECT + SELECT_ENVIOS de cada ruta resultante. */
+  /** Resuelve el filtro y consulta el DECA (SELECT) de cada ruta resultante. */
   async consultarDeca(filtro: string, almacen?: string): Promise<RutaDecaConsulta[]> {
     const resolucion = await this.resolver(filtro, almacen);
     const resultados: RutaDecaConsulta[] = [];
     for (const numeroRuta of resolucion.numerosRuta) {
-      const [deca, envios] = await Promise.all([
-        this.obtenerDeca(numeroRuta, almacen),
-        this.obtenerEnvios(numeroRuta, almacen),
-      ]);
+      const deca = await this.obtenerDeca(numeroRuta, almacen);
       resultados.push({
         numeroRuta,
         deca,
-        envios,
+        envios: [], // SELECT_ENVIOS falla siempre en LUX (ver obtenerEnvios): no se consulta
         totales: await this.obtenerTotalesRuta(numeroRuta, almacen).catch(() => undefined),
         consulta: {
           filtroLog: filtro,
@@ -219,7 +220,6 @@ export class RutasService {
           llamadas: [
             ...resolucion.llamadas,
             { procedimiento: 'p_expRutasDeca', accion: 'SELECT', parametros: { numeroRuta }, almacen, filas: deca.length },
-            { procedimiento: 'p_expRutasDeca', accion: 'SELECT_ENVIOS', parametros: { numeroRuta }, almacen, filas: envios.length },
           ],
         },
       });

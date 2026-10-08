@@ -35,8 +35,8 @@ export interface ExpedicionDetalle {
   /** Datos de la RUTA asignada (p_expRutas): conductor (nombre, apellidos, DNI, telefono, email),
    *  matriculas, transportista, estado... `undefined` si el pedido no tiene ruta o no se encontro. */
   datosRuta: Record<string, string> | undefined;
-  /** DECA de la ruta (p_expRutasDeca: SELECT y SELECT_ENVIOS). `undefined` si no hay ruta o no se pudo leer. */
-  decaRuta: { deca: Array<Record<string, string>>; envios: Array<Record<string, string>> } | undefined;
+  /** DECA de la ruta (p_expRutasDeca SELECT). `undefined` si no hay ruta o no se pudo leer. */
+  decaRuta: { deca: Array<Record<string, string>> } | undefined;
   /** Peligrosidad por referencias (p_manReferenciasADR). `undefined` si no se pudo consultar. */
   peligrosidad: PeligrosidadPedido | undefined;
 }
@@ -243,22 +243,18 @@ export class ExpedicionesService {
     return { valor, referencias };
   }
 
-  /** DECA (p_expRutasDeca SELECT) y envios/eventos (SELECT_ENVIOS) de la ruta, por `numeroRuta` exacto.
-   *  LUX devuelve cuerpo vacio ("") si no hay filas. Sin ruta (vacia o "NO ASIGNADA") no llama a LUX. */
+  /** DECA (p_expRutasDeca SELECT) de la ruta, por `numeroRuta` exacto. SELECT_ENVIOS no se consulta (falla siempre
+   *  en LUX). LUX devuelve cuerpo vacio ("") si no hay filas. Sin ruta (vacia o "NO ASIGNADA") no llama a LUX. */
   async obtenerDecaDeRuta(numeroRuta: string | undefined, almacen?: string): Promise<ExpedicionDetalle['decaRuta']> {
     const ruta = (numeroRuta ?? '').trim();
     if (ruta === '' || ruta.toUpperCase() === 'NO ASIGNADA') {
       return undefined;
     }
-    const filas = async (accion: string): Promise<Array<Record<string, string>>> => {
-      const rows: unknown = await this.luxClient.callProc('p_expRutasDeca', accion, { numeroRuta: ruta }, {
-        operacion: 'expediciones.obtenerDecaDeRuta',
-        almacen,
-      });
-      return Array.isArray(rows) ? (rows as Array<Record<string, string>>) : [];
-    };
-    const [deca, envios] = await Promise.all([filas('SELECT'), filas('SELECT_ENVIOS')]);
-    return { deca, envios };
+    const rows: unknown = await this.luxClient.callProc('p_expRutasDeca', 'SELECT', { numeroRuta: ruta }, {
+      operacion: 'expediciones.obtenerDecaDeRuta',
+      almacen,
+    });
+    return { deca: Array.isArray(rows) ? (rows as Array<Record<string, string>>) : [] };
   }
 
   /**

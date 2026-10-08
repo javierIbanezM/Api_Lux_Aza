@@ -793,7 +793,7 @@ describe('watcher/LuxActionWatcher', () => {
     });
     expect(onRutaDecaActualizada.mock.calls[0]?.[0].deca[0].estado).toBe('ENVIADO');
     expect(llamadas).toContain(`p_expRutasDeca:SELECT:${RUTA_EXACTA}`);
-    expect(llamadas).toContain(`p_expRutasDeca:SELECT_ENVIOS:${RUTA_EXACTA}`);
+    expect(llamadas.some((l) => l.includes('SELECT_ENVIOS'))).toBe(false); // falla siempre en LUX: ya no se consulta
   });
 
   it('con cliente de Docuten, descarga los documentos del shipmentId del DECA y los pasa al sink', async () => {

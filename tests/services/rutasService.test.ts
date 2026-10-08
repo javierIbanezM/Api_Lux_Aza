@@ -72,7 +72,7 @@ describe('services/RutasService', () => {
     expect(numeroRutaDe(undefined, '14764')).toBe('ruta-id-14764');
   });
 
-  it('consultarDecaPorId usa el id de la ruta (SELECT y SELECT_ENVIOS) y devuelve nombre, datos y la consulta hecha', async () => {
+  it('consultarDecaPorId usa el id de la ruta (solo SELECT) y devuelve nombre, datos y la consulta hecha', async () => {
     const { servicio, callProc } = crear({
       proc: (_p, accion) => (accion === 'SELECT' ? [{ shipmentReference: 'RT1_2026_X-AZA', estado: 'ENVIADO' }] : []),
     });
@@ -80,7 +80,8 @@ describe('services/RutasService', () => {
     expect(r?.numeroRuta).toBe('RT1_2026_X');
     expect(r?.deca).toHaveLength(1);
     expect(r?.consulta).toMatchObject({ filtroLog: 'GENERAR_DECA id=14764', metodoResolucion: 'id-ruta' });
-    expect(r?.consulta.llamadas.map((x) => [x.accion, x.parametros])).toEqual([['SELECT', { id: '14764' }], ['SELECT_ENVIOS', { id: '14764' }]]);
+    expect(r?.consulta.llamadas.map((x) => [x.accion, x.parametros])).toEqual([['SELECT', { id: '14764' }]]);
+    expect(callProc).not.toHaveBeenCalledWith('p_expRutasDeca', 'SELECT_ENVIOS', expect.anything(), expect.anything());
     expect(callProc).toHaveBeenCalledWith('p_expRutasDeca', 'SELECT', { id: '14764' }, expect.objectContaining({ almacen: 'SAGUNTO' }));
   });
 
@@ -157,7 +158,7 @@ describe('services/RutasService', () => {
     expect(res.map((r) => [r.numeroRuta, r.deca.length])).toEqual([['RT1_A', 0], ['RT1_B', 1]]);
   });
 
-  it('cada resultado lleva la consulta hecha a la API: resolucion + SELECT + SELECT_ENVIOS con sus parametros y filas', async () => {
+  it('cada resultado lleva la consulta hecha a la API: resolucion + SELECT con sus parametros y filas (sin SELECT_ENVIOS, que falla siempre en LUX)', async () => {
     const { servicio } = crear({
       listar: () => [{ ruta: 'RT1_B' }],
       proc: (_p, accion) => (accion === 'SELECT' ? [{ estado: 'ENVIADO' }] : []),
@@ -169,7 +170,6 @@ describe('services/RutasService', () => {
       llamadas: [
         { procedimiento: 'p_expedicionesAza', accion: 'SELECT', parametros: { ruta: '%RT1%' }, almacen: 'SAGUNTO', filas: 1 },
         { procedimiento: 'p_expRutasDeca', accion: 'SELECT', parametros: { numeroRuta: 'RT1_B' }, almacen: 'SAGUNTO', filas: 1 },
-        { procedimiento: 'p_expRutasDeca', accion: 'SELECT_ENVIOS', parametros: { numeroRuta: 'RT1_B' }, almacen: 'SAGUNTO', filas: 0 },
       ],
     });
   });

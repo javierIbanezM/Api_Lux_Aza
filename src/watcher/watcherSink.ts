@@ -74,7 +74,7 @@ export interface AlbaranActualizado {
   hus: RecepcionHU[];
 }
 
-/** DECA de una ruta (p_expRutasDeca): SELECT + SELECT_ENVIOS tras detectar que alguien consulto
+/** DECA de una ruta (p_expRutasDeca SELECT) tras detectar que alguien consulto
  *  esa ruta en la pantalla de expediciones. Solo se emite si la ruta tiene DECA o envios. */
 export interface RutaDecaActualizada {
   /** Nombre EXACTO de la ruta (resuelto a partir del filtro del log). */
@@ -94,7 +94,7 @@ export interface RutaDecaActualizada {
   };
   /** p_expRutasDeca accion=SELECT. */
   deca: RutaDeca[];
-  /** p_expRutasDeca accion=SELECT_ENVIOS. */
+  /** Siempre vacio: p_expRutasDeca SELECT_ENVIOS falla en LUX en cada llamada y ya no se consulta (se mantiene el campo por compatibilidad). */
   envios: RutaDecaEnvio[];
   /** Pedidos que lleva la ruta y total de `pallets` y `numContenedores` (suma del listado de expediciones). */
   pedidos?: number;

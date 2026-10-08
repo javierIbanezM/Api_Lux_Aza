@@ -185,6 +185,16 @@ deploy/instalar-arranque-pm2.ps1 y la parte del README sobre PM2. Llevar el comm
      Ejemplo real: RT00013840_2026_NTL - VICTRANSA PL = 14 pedidos, 27 pallets, 28 contenedores. Tests: 290 en verde.
    - Requiere reiniciar el watcher: pm2 restart api-whales-watcher
 
+5p. ERROR 'Error al convertir una cadena de caracteres en fecha y/u hora' EN lux.log  (SIN COMMIT)
+   - Origen: era del watcher/API. p_expRutasDeca accion SELECT_ENVIOS falla en LUX en CADA llamada (incluso con una
+     ruta inexistente), devuelve cuerpo vacio y deja un SEVERE con la traza en lux.log. 2.008 de 2.979 llamadas del
+     apiUser (el resto de SEVERE se atribuia mal por lanzar SELECT y SELECT_ENVIOS a la vez). La UI de LUX no usa
+     esa accion y nunca devolvio datos (el campo `envios` siempre estaba vacio).
+   - Arreglo: ya no se llama a SELECT_ENVIOS (RutasService, detalle de expedicion, JSON del watcher). `envios` se
+     mantiene como [] por compatibilidad y se quita la tarjeta 'Envios del DECA' de la web. Comprobado: 19 llamadas
+     del apiUser sin ningun SEVERE nuevo. Tests: 290 en verde.
+   - Requiere reiniciar API y watcher: pm2 restart all
+
 6. DOCS Y OTROS: README.md, informes/mejoras-pendientes.txt, .gitignore (bruno/). La coleccion de
    Bruno (bruno/docuten/) NO se versiona: lleva la clave.
 
