@@ -1241,6 +1241,29 @@ describe('watcher/LuxActionWatcher', () => {
     expect(onRutaDecaActualizada).not.toHaveBeenCalled();
   });
 
+  it('un evento de un pedido que YA NO EXISTE en LUX (cabecera vacia) se ignora con un aviso claro, sin TypeError ni error', async () => {
+    mock.updateOptions({
+      onProc: (proc, body) => {
+        if (proc === 'p_expCabeceraAza' && body.accion === 'SELECT_ONE') {
+          return { status: 200, body: '' as never }; // LUX devuelve cuerpo vacio si el id no existe
+        }
+        return { status: 200, body: [] };
+      },
+    });
+    const onExpedicionActualizada = vi.fn();
+    await startAndWaitBaseline({ onExpedicionActualizada });
+
+    appendFileSync(luxLogPath, lineaCierre(1));
+
+    await waitUntil(() => logLines.some((l) => l.operacion === 'watcher.refreshError'), 5000);
+    const aviso = logLines.find((l) => l.operacion === 'watcher.refreshError');
+    expect(aviso?.level).toBe('warn');
+    expect(String(aviso?.error)).toContain('ya no existe en LUX');
+    expect(String(aviso?.error)).not.toContain('Cannot read properties');
+    expect(aviso?.reintentara).toBe(false);
+    expect(onExpedicionActualizada).not.toHaveBeenCalled();
+  });
+
   it('el JSON del watcher incluye los datos extra (expedicion y recepcion), con los campos vacios', async () => {
     mock.updateOptions({
       onProc: (proc, body) => {

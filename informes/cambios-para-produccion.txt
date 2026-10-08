@@ -214,6 +214,14 @@ deploy/instalar-arranque-pm2.ps1 y la parte del README sobre PM2. Llevar el comm
      Sustituye a WATCHER_PAUSA_ENTRE_RUTAS_MS. Tests: 301 en verde.
    - Requiere reiniciar API y watcher: pm2 restart all
 
+5r. PEDIDO/ALBARAN BORRADO EN LUX: AVISO CLARO EN VEZ DE TypeError  (SIN COMMIT)
+   - Un evento de un pedido que ya no existe en LUX (p.ej. id 43942, borrado despues de pasarlo a almacen) dejaba
+     'Cannot read properties of undefined (reading pedido)' como error. Ahora es un aviso (warn) 'ya no existe en LUX:
+     probablemente se borro', con el objetivo (clave), almacen y motivos en el log; no se reintenta. Igual para albaranes.
+   - Prueba de carga real (arranque local con ~18 h de backlog: 979 pedidos + 104 albaranes + 111 rutas en seguimiento):
+     7.005 llamadas en 18 min (6,5/s de media), 0 SEVERE en lux.log; despues, 6 a 25 llamadas/min y una pasada de ~150
+     cada 10 min. Tests: 302 en verde. Requiere reiniciar el watcher: pm2 restart api-whales-watcher
+
 6. DOCS Y OTROS: README.md, informes/mejoras-pendientes.txt, .gitignore (bruno/). La coleccion de
    Bruno (bruno/docuten/) NO se versiona: lleva la clave.
 

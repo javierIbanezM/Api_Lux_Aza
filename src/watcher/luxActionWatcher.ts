@@ -61,6 +61,14 @@ function decaIncompleto(c: RutaDecaConsulta, descargas: DescargaDocumento[], con
   });
 }
 
+/** El pedido/albaran del evento ya no existe en LUX (borrado o de otro almacen): no hay nada que guardar ni reintentar. */
+class ElementoNoEncontradoError extends Error {
+  constructor(mensaje: string) {
+    super(mensaje);
+    this.name = 'ElementoNoEncontradoError';
+  }
+}
+
 /** Error de infraestructura que se resuelve esperando (LUX caido, red, token): el evento NO se
  *  da por perdido, se reintenta. Un error funcional/de datos no se reintenta (daria igual). */
 function isTransientLuxError(err: unknown): boolean {
@@ -788,13 +796,20 @@ export class LuxActionWatcher {
       }
     } catch (err) {
       const reintentara = isTransientLuxError(err);
-      this.logger.error('No se pudo re-consultar tras deteccion en log', {
+      const detalle = {
         operacion: 'watcher.refreshError',
         resultado: 'ERROR',
+        objetivo: key,
+        almacen: entry.target.almacen,
         motivos,
         reintentara,
         error: err instanceof Error ? err.message : String(err),
-      });
+      };
+      if (err instanceof ElementoNoEncontradoError) {
+        this.logger.warn('El pedido/albaran del evento ya no existe en LUX: se ignora', detalle);
+      } else {
+        this.logger.error('No se pudo re-consultar tras deteccion en log', detalle);
+      }
       if (reintentara) {
         this.scheduleRetry(key, entry);
       }
@@ -981,6 +996,9 @@ export class LuxActionWatcher {
 
     if (idPedidoDirecto) {
       cabecera = await this.expedicionesService.obtenerExpedicion(idPedidoDirecto, almacen);
+      if (!cabecera) {
+        throw new ElementoNoEncontradoError(`El pedido con id ${idPedidoDirecto} ya no existe en LUX (almacen ${almacen ?? 'por defecto'}): probablemente se borro`);
+      }
       pedido = pedido ?? cabecera.pedido;
     }
     if (!pedido) {
@@ -1042,6 +1060,9 @@ export class LuxActionWatcher {
 
     if (idAlbaranDirecto) {
       cabecera = await this.recepcionesService.obtenerRecepcion(idAlbaranDirecto, almacen);
+      if (!cabecera) {
+        throw new ElementoNoEncontradoError(`El albaran con id ${idAlbaranDirecto} ya no existe en LUX (almacen ${almacen ?? 'por defecto'}): probablemente se borro`);
+      }
       albaran = albaran ?? cabecera.albaran;
     }
     if (!albaran) {
