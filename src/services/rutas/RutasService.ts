@@ -12,6 +12,9 @@ export interface ResolucionRuta {
   llamadas: LlamadaApi[];
 }
 
+/** Minutos que se recuerdan los totales de una ruta. */
+const TOTALES_CACHE_MS = 10 * 60_000;
+
 /** Totales de lo que lleva una ruta: suma de los pedidos asignados (filas del listado de expediciones). */
 export interface TotalesRuta {
   /** Pedidos de la ruta. */
@@ -83,15 +86,37 @@ export class RutasService {
    * comodines y `_` coincide con cualquier caracter).
    */
   async obtenerTotalesRuta(numeroRuta: string, almacen?: string): Promise<TotalesRuta> {
+    const clave = `${almacen ?? ''}|${numeroRuta.trim().toUpperCase()}`;
+    const ahora = Date.now();
+    const cacheado = this.totalesCache.get(clave);
+    if (cacheado && cacheado.expira > ahora) {
+      return cacheado.datos;
+    }
+    const totales = await this.calcularTotalesRuta(numeroRuta, almacen);
+    this.totalesCache.set(clave, { expira: ahora + TOTALES_CACHE_MS, datos: totales });
+    return totales;
+  }
+
+  /** Los totales de una ruta casi no cambian: se guardan unos minutos para no repetir listados pesados. */
+  private readonly totalesCache = new Map<string, { expira: number; datos: TotalesRuta }>();
+
+  private async calcularTotalesRuta(numeroRuta: string, almacen?: string): Promise<TotalesRuta> {
     const nombre = numeroRuta.trim().toUpperCase();
     const filas = new Map<string, Record<string, string>>();
-    for (const extra of [{}, { estado: 'ENVIADO' }] as Array<Record<string, string>>) {
+    const delListado = async (extra: Record<string, string>): Promise<void> => {
       const rows = (await this.expedicionesService.listarExpediciones({ ruta: numeroRuta, ...extra }, almacen)) as Array<Record<string, string>>;
       for (const r of rows) {
         if ((r.ruta ?? '').trim().toUpperCase() === nombre) {
           filas.set(r.id ?? `${r.pedido}|${r.propietario}`, r);
         }
       }
+    };
+    // Una ruta se envia entera: o sus pedidos aun no estan enviados (el listado normal los trae todos) o ya lo
+    // estan todos (solo salen con estado=ENVIADO, que es el listado lento). Solo se pide el segundo si el
+    // primero no trajo nada, asi las rutas sin enviar no pagan el listado pesado.
+    await delListado({});
+    if (filas.size === 0) {
+      await delListado({ estado: 'ENVIADO' });
     }
     const entero = (v: string | undefined): number => {
       const n = Number.parseInt((v ?? '').trim(), 10);

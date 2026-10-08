@@ -195,6 +195,25 @@ deploy/instalar-arranque-pm2.ps1 y la parte del README sobre PM2. Llevar el comm
      del apiUser sin ningun SEVERE nuevo. Tests: 290 en verde.
    - Requiere reiniciar API y watcher: pm2 restart all
 
+5q. EL ARRANQUE SATURABA LUX: LIMITE DE LLAMADAS SIMULTANEAS  (SIN COMMIT)
+   - Sintoma: al arrancar el watcher, 'SEVERE: An I/O error has occurred while writing a response message entity'
+     ('Se ha anulado una conexion establecida por el software en su equipo host') y LUX lento para todos. En el log de
+     las 10:11 del 8/10: 458 llamadas del apiUser en 36 s y un pico de 80 en un solo segundo; los listados con
+     estado=ENVIADO tardan 1,3 s solos y 4,3 s con 6 en paralelo, se pasaba de LUX_TIMEOUT_MS (10 s), el cliente
+     abandonaba y LUX dejaba el SEVERE. Empezo tras anadir el seguimiento del DECA firmado y los totales de ruta.
+   - Arreglo: (1) LuxClient limita las llamadas SIMULTANEAS a LUX (LUX_MAX_CONCURRENT, por defecto 4; el resto espera
+     turno y el timeout solo cuenta desde que sale la peticion); (2) los totales de ruta hacen 1 listado (no 2): el
+     pesado de ENVIADO solo si el normal no trae nada, y se recuerdan 10 min; (3) pausa entre rutas al repasar DECA
+     pendientes (WATCHER_PAUSA_ENTRE_RUTAS_MS, 500).
+   - Comprobado contra LUX real: 60 listados pesados lanzados a la vez -> LUX ve como mucho 5 llamadas/segundo y 0
+     SEVERE (antes, picos de 80). Tests: 296 en verde.
+   - AJUSTE (a peticion): los refrescos del watcher (pedidos, albaranes, rutas) salen por LOTES de
+     WATCHER_LOTE_TAMANO (5): cada lote espera a que TODOS los del anterior terminen y, si hay mas en cola, una
+     pausa de WATCHER_LOTE_PAUSA_MS (2000) antes del siguiente (LoteScheduler). Sin cola no hay retraso. Probado con LUX
+     real: 30 consultas pesadas encoladas -> lotes de 5 (0s,5s,11s,16s,21s,25s), 5 llamadas/s maximo, 0 SEVERE.
+     Sustituye a WATCHER_PAUSA_ENTRE_RUTAS_MS. Tests: 301 en verde.
+   - Requiere reiniciar API y watcher: pm2 restart all
+
 6. DOCS Y OTROS: README.md, informes/mejoras-pendientes.txt, .gitignore (bruno/). La coleccion de
    Bruno (bruno/docuten/) NO se versiona: lleva la clave.
 

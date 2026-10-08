@@ -13,6 +13,8 @@ export interface AppConfig {
   luxPassword: string;
   luxWarehouse: string;
   luxTimeoutMs: number;
+  /** Maximo de llamadas SIMULTANEAS a LUX por proceso (el resto espera turno). Evita saturar LUX al arrancar. */
+  luxMaxConcurrent: number;
   luxRefreshMarginMs: number;
   luxCatalogCacheTtlMs: number;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
@@ -89,6 +91,7 @@ export function loadConfig(raw: NodeJS.ProcessEnv = process.env): AppConfig {
     luxPassword: requireString('LUX_PASSWORD', raw),
     luxWarehouse: requireString('LUX_WAREHOUSE', raw),
     luxTimeoutMs: optionalInt('LUX_TIMEOUT_MS', raw, 10_000),
+    luxMaxConcurrent: optionalInt('LUX_MAX_CONCURRENT', raw, 4),
     luxRefreshMarginMs: optionalInt('LUX_REFRESH_MARGIN_MS', raw, 60_000),
     luxCatalogCacheTtlMs: optionalInt('LUX_CATALOG_CACHE_TTL_MS', raw, 300_000),
     logLevel: parseLogLevel(raw),

@@ -5,6 +5,7 @@ import type { AuthManager } from '../../auth';
 import { assertValidProcedureName } from '../procedures';
 import { LuxFunctionalError, LuxHttpError, LuxNetworkError, LuxValidationError } from '../errors';
 import type { ProcRequest, ProcResponse, ProcResponseRow } from '../models';
+import { ConcurrencyLimiter } from './ConcurrencyLimiter';
 
 /**
  * Acciones de escritura de los procedimientos de LUX. Los reintentos automaticos del
@@ -43,6 +44,8 @@ function sleep(ms: number): Promise<void> {
  */
 export class LuxClient {
   private readonly http: AxiosInstance;
+  /** Tope de llamadas simultaneas a LUX de este proceso (config.luxMaxConcurrent). */
+  private readonly limiter: ConcurrencyLimiter;
 
   constructor(
     private readonly config: AppConfig,
@@ -52,6 +55,7 @@ export class LuxClient {
     private readonly maxRetries: number = DEFAULT_MAX_RETRIES,
     private readonly retryBaseDelayMs: number = DEFAULT_RETRY_BASE_DELAY_MS,
   ) {
+    this.limiter = new ConcurrencyLimiter(config.luxMaxConcurrent ?? 4);
     this.http = httpClient ?? axios.create({
       baseURL: config.luxBaseUrl,
       timeout: config.luxTimeoutMs,
@@ -102,13 +106,16 @@ export class LuxClient {
       const startedAt = Date.now();
       try {
         const token = await this.auth.getValidToken();
-        const response = await this.http.put<ProcResponse>(`/proc/${procedimiento}`, body, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Almacen: almacen,
-            'Content-Type': 'application/json',
-          },
-        });
+        // El turno se espera ANTES de enviar: el timeout de axios solo cuenta desde que sale la peticion.
+        const response = await this.limiter.run(() =>
+          this.http.put<ProcResponse>(`/proc/${procedimiento}`, body, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Almacen: almacen,
+              'Content-Type': 'application/json',
+            },
+          }),
+        );
 
         const rows = response.data ?? [];
         const first: ProcResponseRow | undefined = rows[0];

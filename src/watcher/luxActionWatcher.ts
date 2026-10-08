@@ -13,6 +13,7 @@ import { LuxAuthError, LuxHttpError, LuxNetworkError } from '../lux/errors';
 import type { Expedicion, ExpedicionContenedor, ExpedicionLinea, Recepcion, RecepcionHU, RecepcionLinea } from '../lux/models';
 import { LogTailer } from './logTailer';
 import { buscarDecaPendientes, firmaDeca } from './decaPendientes';
+import { LoteScheduler } from './loteScheduler';
 import { matchActionLine, type ActionEventType, type DetectedEvent } from './actionPatterns';
 import { parseLogTime } from './logTime';
 import { RutasProcesadas } from './rutasProcesadas';
@@ -38,9 +39,6 @@ interface PendingRefresh {
   /** Re-consultas hechas porque el DECA seguia incompleto (ver `decaIncompleto`). */
   rechecks?: number;
 }
-
-/** Rutas/DECA que la revision de arranque deja en curso a la vez contra LUX. */
-const MAX_RUTAS_EN_ARRANQUE = 3;
 
 /** Cada cuanto como maximo se persiste la posicion de los logs (cuando todo esta procesado). */
 const COMMIT_INTERVAL_MS = 5_000;
@@ -177,6 +175,8 @@ export class LuxActionWatcher {
   private readonly mobileTailer: LogTailer;
   private pollHandle: ReturnType<typeof setInterval> | undefined;
   private pendientesHandle: ReturnType<typeof setInterval> | undefined;
+  /** Los refrescos contra LUX salen por lotes (config.loteTamano) para no saturarlo. */
+  private readonly lotes: LoteScheduler;
   private revisandoPendientes = false;
 
   constructor(
@@ -205,6 +205,7 @@ export class LuxActionWatcher {
       join(config.stateDir, 'lux-mobile.state.json'),
       false,
     );
+    this.lotes = new LoteScheduler(config.loteTamano, config.lotePausaMs);
     if (rutasService) {
       this.rutasProcesadas = new RutasProcesadas(join(config.stateDir, 'rutas-procesadas.json'));
     }
@@ -288,7 +289,7 @@ export class LuxActionWatcher {
           break;
         }
         this.scheduleRefresh({ domain: 'ruta', ruta: p.numeroRuta, almacen: p.almacen, eventoEn: Date.now() }, 'rutaConsultada');
-        while (!this.parado && this.rutasEnCurso() >= MAX_RUTAS_EN_ARRANQUE) {
+        while (!this.parado && this.rutasEnCurso() >= this.config.loteTamano) {
           await new Promise((resolve) => setTimeout(resolve, 150));
         }
       }
@@ -389,9 +390,9 @@ export class LuxActionWatcher {
         }
         this.scheduleRefresh(u.target, u.target.domain === 'decaRuta' ? 'decaGenerada' : 'rutaConsultada');
         programadas += 1;
-        // Escalonado: como mucho MAX_RUTAS_EN_ARRANQUE rutas en curso a la vez (el listado de
+        // Escalonado: como mucho un lote (WATCHER_LOTE_TAMANO) de rutas en curso a la vez (el listado de
         // expediciones de LUX es pesado; lanzarlas todas juntas provoca tiempos agotados).
-        while (!this.parado && this.rutasEnCurso() >= MAX_RUTAS_EN_ARRANQUE) {
+        while (!this.parado && this.rutasEnCurso() >= this.config.loteTamano) {
           await new Promise((resolve) => setTimeout(resolve, 150));
         }
       }
@@ -669,7 +670,8 @@ export class LuxActionWatcher {
       return Promise.resolve();
     }
     const previous = this.inFlight.get(key) ?? Promise.resolve();
-    const run = previous.then(() => this.runRefresh(key, entry));
+    // Al refrescar, cada tarea espera su lote: de config.loteTamano en config.loteTamano, cada lote cuando el anterior termino.
+    const run = previous.then(() => this.lotes.run(() => (this.parado ? Promise.resolve() : this.runRefresh(key, entry))));
     this.inFlight.set(key, run);
     void run.finally(() => {
       if (this.inFlight.get(key) === run) {

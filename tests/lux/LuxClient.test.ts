@@ -26,6 +26,25 @@ describe('LuxClient', () => {
     return { client, auth, config };
   }
 
+  it('con luxMaxConcurrent=2 nunca hay mas de 2 llamadas a LUX en vuelo, aunque se lancen 10 a la vez', async () => {
+    let enVuelo = 0;
+    let maxima = 0;
+    mock.updateOptions({
+      onProc: async () => {
+        enVuelo += 1;
+        maxima = Math.max(maxima, enVuelo);
+        await new Promise((r) => setTimeout(r, 40));
+        enVuelo -= 1;
+        return { status: 200, body: [{ id: '1' }] };
+      },
+    });
+    const { client } = buildClient({ luxMaxConcurrent: 2 });
+
+    await Promise.all(Array.from({ length: 10 }, () => client.callProc('p_expedicionesAza', 'SELECT', {})));
+
+    expect(maxima).toBe(2);
+  });
+
   it('rechaza localmente un procedimiento fuera de whitelist sin llamar a LUX (403 local)', async () => {
     const { client } = buildClient();
     await expect(client.callProc('p_otroProcedimiento', 'SELECT', {})).rejects.toBeInstanceOf(

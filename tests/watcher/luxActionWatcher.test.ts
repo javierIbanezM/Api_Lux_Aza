@@ -48,6 +48,8 @@ describe('watcher/LuxActionWatcher', () => {
     decaRecheckMax: 20,
     decaPendientesMs: 600_000,
     decaSeguimientoDias: 14,
+    loteTamano: 5,
+    lotePausaMs: 0,
     stateDir: '',
     rutasDecaDir: '',
     revisarFicherosDeca: 3,

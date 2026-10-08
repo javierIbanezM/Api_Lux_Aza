@@ -19,26 +19,44 @@ function crear(opts: {
 }
 
 describe('services/RutasService', () => {
-  it('obtenerTotalesRuta suma numPalets y numContenedores de los pedidos de la ruta (sin estado + ENVIADO), solo los de ESA ruta exacta', async () => {
+  it('obtenerTotalesRuta suma numPalets y numContenedores de los pedidos de la ruta, solo los de ESA ruta exacta (`_` es comodin en LUX)', async () => {
     const { servicio, listarExpediciones } = crear({
-      listar: (f) =>
-        f.estado === 'ENVIADO'
-          ? [
-              { id: '2', pedido: 'P2', propietario: 'B', estado: 'ENVIADO', ruta: 'RT1_2026_X', numPalets: '4', pallets: '', numContenedores: '6' },
-              { id: '9', pedido: 'P9', propietario: 'C', estado: 'ENVIADO', ruta: 'RT1-2026-X', numPalets: '9', pallets: '', numContenedores: '9' }, // `_` como comodin: otra ruta
-            ]
-          : [
-              { id: '1', pedido: 'P1', propietario: 'A', estado: 'ASIGNADO', ruta: 'rt1_2026_x ', numPalets: '2', numContenedores: '2' },
-              { id: '3', pedido: 'P3', propietario: 'A', estado: 'ASIGNADO', ruta: 'RT1_2026_X', numPalets: '', numContenedores: '' }, // vacios: cuentan 0
-            ],
+      listar: () => [
+        { id: '1', pedido: 'P1', propietario: 'A', estado: 'ASIGNADO', ruta: 'rt1_2026_x ', numPalets: '2', pallets: '', numContenedores: '2' },
+        { id: '2', pedido: 'P2', propietario: 'B', estado: 'ASIGNADO', ruta: 'RT1_2026_X', numPalets: '4', pallets: '', numContenedores: '6' },
+        { id: '3', pedido: 'P3', propietario: 'A', estado: 'ASIGNADO', ruta: 'RT1_2026_X', numPalets: '', pallets: '', numContenedores: '' }, // vacios: cuentan 0
+        { id: '9', pedido: 'P9', propietario: 'C', estado: 'ASIGNADO', ruta: 'RT1-2026-X', numPalets: '9', pallets: '', numContenedores: '9' }, // otra ruta
+      ],
     });
 
     const t = await servicio.obtenerTotalesRuta('RT1_2026_X', 'SAGUNTO');
 
     expect(t).toMatchObject({ pedidos: 3, pallets: 6, numContenedores: 8 });
     expect(t.detalle.map((d) => d.pedido).sort()).toEqual(['P1', 'P2', 'P3']);
+    // Pedidos sin enviar: basta el listado normal, NO se pide el listado pesado de ENVIADO.
+    expect(listarExpediciones).toHaveBeenCalledTimes(1);
+    expect(listarExpediciones).toHaveBeenCalledWith({ ruta: 'RT1_2026_X' }, 'SAGUNTO');
+  });
+
+  it('obtenerTotalesRuta: si el listado normal no trae nada (ruta ya enviada) pide el de estado=ENVIADO', async () => {
+    const { servicio, listarExpediciones } = crear({
+      listar: (f) => (f.estado === 'ENVIADO' ? [{ id: '2', pedido: 'P2', propietario: 'B', estado: 'ENVIADO', ruta: 'RT1_2026_X', numPalets: '4', pallets: '', numContenedores: '6' }] : []),
+    });
+    const t = await servicio.obtenerTotalesRuta('RT1_2026_X', 'SAGUNTO');
+    expect(t).toMatchObject({ pedidos: 1, pallets: 4, numContenedores: 6 });
     expect(listarExpediciones).toHaveBeenCalledWith({ ruta: 'RT1_2026_X' }, 'SAGUNTO');
     expect(listarExpediciones).toHaveBeenCalledWith({ ruta: 'RT1_2026_X', estado: 'ENVIADO' }, 'SAGUNTO');
+  });
+
+  it('los totales de una ruta se recuerdan unos minutos: la 2a consulta no vuelve a llamar a LUX', async () => {
+    const { servicio, listarExpediciones } = crear({
+      listar: () => [{ id: '1', pedido: 'P1', propietario: 'A', estado: 'ASIGNADO', ruta: 'RT1_2026_X', numPalets: '2', pallets: '', numContenedores: '2' }],
+    });
+    await servicio.obtenerTotalesRuta('RT1_2026_X', 'SAGUNTO');
+    await servicio.obtenerTotalesRuta('rt1_2026_x', 'SAGUNTO'); // mismo almacen y ruta (sin distinguir mayusculas)
+    expect(listarExpediciones).toHaveBeenCalledTimes(1);
+    await servicio.obtenerTotalesRuta('RT1_2026_X', 'ALMUSSAFES'); // otro almacen: otra consulta
+    expect(listarExpediciones).toHaveBeenCalledTimes(2);
   });
 
   it('una ruta sin pedidos da totales a 0 (no undefined): asi no se reconsulta eternamente', async () => {
@@ -50,8 +68,8 @@ describe('services/RutasService', () => {
     let falla = false;
     const { servicio } = crear({
       listar: (f) => {
-        if (falla && f.estado === 'ENVIADO') {
-          throw new Error('LUX caido');
+        if (falla && f.ruta === 'RT1_2026_X') {
+          throw new Error('LUX caido'); // solo el listado de totales (nombre exacto); el de la resolucion lleva comodines
         }
         return [{ id: '1', pedido: 'P1', propietario: 'A', estado: 'ENVIADO', ruta: 'RT1_2026_X', numPalets: '3', numContenedores: '5' }];
       },
@@ -61,7 +79,7 @@ describe('services/RutasService', () => {
     expect(ok?.totales).toMatchObject({ pallets: 3, numContenedores: 5 });
 
     falla = true;
-    const [sinTotales] = await servicio.consultarDeca('%RT1_2026_X%', 'SAGUNTO');
+    const [sinTotales] = await servicio.consultarDeca('%RT1_2026_X%', 'ALMUSSAFES'); // otro almacen: no sale de la cache
     expect(sinTotales?.totales).toBeUndefined();
     expect(sinTotales?.deca).toHaveLength(1);
   });

@@ -32,6 +32,11 @@ export interface WatcherConfig {
   /** Dias, desde la creacion del DECA, durante los que se sigue su estado (ENVIADO -> FIRMADO -> entregado)
    *  para actualizar el PDF cuando Docuten lo firma. Por defecto 14. */
   decaSeguimientoDias: number;
+  /** Los refrescos contra LUX (pedidos, albaranes, rutas) salen por LOTES: este es el tamano del lote. Cada lote
+   *  espera a que terminen todos los del anterior. Por defecto 5. */
+  loteTamano: number;
+  /** Pausa (ms) entre un lote y el siguiente cuando hay mas en cola. Por defecto 2000. */
+  lotePausaMs: number;
   /** Carpeta donde se guarda un JSON por evento (ver src/watcher/jsonFileSink.ts), solucion
    *  provisional mientras se define el destino definitivo (paso 3, ver watcherSink.ts). */
   jsonEventsDir: string;
@@ -117,6 +122,8 @@ export function loadWatcherConfig(raw: NodeJS.ProcessEnv = process.env): Watcher
     decaRecheckMax: optionalInt('WATCHER_DECA_RECHECK_MAX', raw, 20),
     decaPendientesMs: optionalInt('WATCHER_DECA_PENDIENTES_MS', raw, 600_000),
     decaSeguimientoDias: optionalInt('WATCHER_DECA_SEGUIMIENTO_DIAS', raw, 14),
+    loteTamano: optionalInt('WATCHER_LOTE_TAMANO', raw, 5),
+    lotePausaMs: optionalInt('WATCHER_LOTE_PAUSA_MS', raw, 2000),
     jsonEventsDir: optionalString('WATCHER_JSON_DIR', raw, 'data/watcher-events'),
     rutasDecaDir: optionalString('WATCHER_RUTAS_DECA_DIR', raw, 'data/watcher-rutas-deca'),
     revisarFicherosDeca: optionalInt('WATCHER_REVISAR_FICHEROS_DECA', raw, 3),

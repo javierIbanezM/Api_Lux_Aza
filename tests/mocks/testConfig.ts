@@ -8,6 +8,7 @@ export function buildTestConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     luxPassword: 'secret',
     luxWarehouse: 'ALM01',
     luxTimeoutMs: 2000,
+    luxMaxConcurrent: 8,
     luxRefreshMarginMs: 60_000,
     luxCatalogCacheTtlMs: 60_000,
     logLevel: 'error',
